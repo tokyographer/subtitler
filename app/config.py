@@ -14,12 +14,17 @@ class Settings(BaseSettings):
     max_file_size_mb: int = 4096  # 4 GB
 
     allowed_extensions: frozenset = frozenset({
+        # video
         ".mp4", ".mov", ".avi", ".mkv", ".webm",
         ".m4v", ".mpg", ".mpeg", ".wmv", ".flv", ".3gp",
+        # audio
+        ".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac",
+        ".opus", ".wma", ".aiff", ".aif",
     })
 
     allowed_mime_prefixes: frozenset = frozenset({
         "video/",
+        "audio/",
         "application/octet-stream",  # some browsers send this for .mkv
     })
 

@@ -175,7 +175,7 @@ export default function App() {
             >
               {file ? (
                 <>
-                  <div className="icon">🎥</div>
+                  <div className="icon">{file.type.startsWith("audio/") ? "🎵" : "🎥"}</div>
                   <div className="file-name">{file.name}</div>
                   <div className="hint">
                     {(file.size / 1024 / 1024).toFixed(1)} MB — click to change
@@ -186,7 +186,7 @@ export default function App() {
                   <div className="icon">📂</div>
                   <div>Drop a video file here</div>
                   <div className="hint">
-                    or click to browse — MP4, MOV, MKV, AVI, WebM, and more
+                    or click to browse — MP4, MOV, MKV, MP3, WAV, M4A, and more
                   </div>
                 </>
               )}
@@ -195,7 +195,7 @@ export default function App() {
             <input
               ref={fileInputRef}
               type="file"
-              accept="video/*,.mkv,.avi,.wmv,.flv"
+              accept="video/*,audio/*,.mkv,.avi,.wmv,.flv,.flac,.opus,.wma,.aiff"
               style={{ display: "none" }}
               onChange={onFileChange}
             />
