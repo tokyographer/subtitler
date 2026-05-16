@@ -38,5 +38,7 @@ frontend/.vite/
 .coverage
 htmlcov/
 
+.claude/
+
 # MLX model cache (optional — can be large)
 # ~/.cache/huggingface/
