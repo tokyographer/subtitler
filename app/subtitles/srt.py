@@ -50,6 +50,8 @@ def segments_to_srt(
     if not segments:
         return ""
 
+    MIN_DURATION = 0.5  # seconds — YouTube requires end > start
+
     blocks: list[str] = []
     out_idx = 0
     for seg in segments:
@@ -59,6 +61,9 @@ def segments_to_srt(
 
         if not raw_text:
             continue
+
+        if end <= start:
+            end = start + MIN_DURATION
 
         out_idx += 1
         wrapped = wrap_subtitle_text(raw_text, max_chars)
