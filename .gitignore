@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+.env
+dist/
+build/
+*.egg
+
+# Storage (user files — never commit)
+storage/uploads/
+storage/audio/
+storage/outputs/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/.vite/
+.npm/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# MLX model cache (optional — can be large)
+# ~/.cache/huggingface/
