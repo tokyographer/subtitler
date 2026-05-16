@@ -120,6 +120,7 @@ header p  { color: var(--text-muted); margin-top: 6px; }
   margin-top: 4px;
   line-height: 1.4;
 }
+.field-hint.engine-warn { color: var(--yellow); }
 
 /* ── Advanced options ─────────────────────────────────────────────────── */
 .btn-advanced-toggle {

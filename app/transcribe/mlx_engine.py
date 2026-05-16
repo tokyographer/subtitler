@@ -22,6 +22,13 @@ class MLXWhisperEngine(TranscriptionEngine):
     def name(self) -> str:
         return "mlx"
 
+    def is_available(self) -> tuple[bool, str]:
+        try:
+            import mlx_whisper  # noqa: F401
+            return True, ""
+        except ImportError:
+            return False, "mlx-whisper not installed. Run: pip install mlx-whisper"
+
     def _resolve_repo(self, model: str) -> str:
         repo = settings.mlx_model_repos.get(model)
         if repo is None:

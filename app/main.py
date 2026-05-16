@@ -192,6 +192,15 @@ async def upload_video(
 
     if engine not in _ENGINES:
         raise HTTPException(400, f"Unknown engine '{engine}'. Available: {', '.join(_ENGINES)}")
+
+    # Check engine availability before queuing work.
+    ok, reason = _ENGINES[engine].is_available()
+    if not ok:
+        raise HTTPException(
+            400,
+            f"Engine '{engine}' is not available on this system:\n{reason}",
+        )
+
     if model not in settings.mlx_model_repos:
         raise HTTPException(400, f"Unknown model '{model}'. Available: {', '.join(settings.mlx_model_repos)}")
     if task not in ("transcribe", "translate"):
@@ -299,10 +308,15 @@ async def download_srt(job_id: str):
 @app.get("/api/config")
 async def get_config():
     ffmpeg_ok = bool(shutil.which("ffmpeg"))
+    engine_status = {
+        name: {"available": ok, "reason": reason}
+        for name, engine in _ENGINES.items()
+        for ok, reason in [engine.is_available()]
+    }
     return {
         "models": list(settings.mlx_model_repos.keys()),
         "languages": settings.supported_languages,
-        "engines": list(_ENGINES.keys()),
+        "engines": engine_status,
         "defaults": {
             "model": settings.default_model,
             "language": settings.default_language,
@@ -315,8 +329,7 @@ async def get_config():
         "system": {
             "ffmpeg_available": ffmpeg_ok,
             "ffmpeg_warning": None if ffmpeg_ok else (
-                "FFmpeg is not installed. "
-                "Run: brew install ffmpeg"
+                "FFmpeg is not installed. Run: brew install ffmpeg"
             ),
         },
     }

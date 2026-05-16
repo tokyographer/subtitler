@@ -49,6 +49,15 @@ class TranscriptionEngine(ABC):
     def name(self) -> str:
         """Short identifier, e.g. 'mlx' or 'whisper_cpp'."""
 
+    def is_available(self) -> tuple[bool, str]:
+        """
+        Return ``(available, reason)`` without performing heavy work.
+        Subclasses should override to check prerequisites (binary on PATH,
+        Python package importable, etc.).  ``reason`` is shown in the UI when
+        ``available`` is False.
+        """
+        return True, ""
+
     @abstractmethod
     def transcribe(
         self,

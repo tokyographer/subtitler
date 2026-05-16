@@ -296,6 +296,102 @@ The RAM disk is lost on reboot; uploads are deleted after transcription anyway.
 
 ---
 
+## whisper.cpp Engine (optional)
+
+whisper.cpp is an alternative transcription backend. It uses Metal GPU automatically on Apple Silicon. It is slower than mlx-whisper for most use cases but may be preferred for CPU-only machines or when you need the widest codec compatibility.
+
+### Installation via Homebrew (recommended)
+
+```bash
+brew install whisper-cpp
+```
+
+Verify: `whisper-cli --help`
+
+### Build from source with Metal (Apple Silicon)
+
+```bash
+git clone https://github.com/ggerganov/whisper.cpp
+cd whisper.cpp
+cmake -B build -DGGML_METAL=ON
+cmake --build build -j$(sysctl -n hw.logicalcpu) --config Release
+# Binary is at: build/bin/whisper-cli
+```
+
+### Build with Core ML (fastest on-device inference)
+
+Core ML uses the Neural Engine and can be significantly faster than Metal for supported models.
+
+```bash
+# Requires Xcode and Python coremltools
+pip install coremltools
+
+# Build whisper.cpp with Core ML enabled
+cmake -B build -DWHISPER_COREML=ON
+cmake --build build -j$(sysctl -n hw.logicalcpu)
+
+# Convert a model to Core ML format
+cd models
+python convert-whisper-to-coreml.py --model large-v3-turbo
+# This creates: ggml-large-v3-turbo-encoder.mlmodelc/ next to the .bin file
+```
+
+Then enable Core ML in `.env`:
+```
+SUBTITLER_WHISPER_CPP_USE_COREML=true
+```
+
+### Download models
+
+whisper.cpp uses GGML `.bin` model files, separate from the MLX models.
+
+```bash
+# Create a model directory
+mkdir -p ~/whisper-models
+
+# Download with the bundled script (from a whisper.cpp repo clone)
+bash models/download-ggml-model.sh large-v3-turbo ~/whisper-models
+
+# Or download directly from HuggingFace
+curl -L -o ~/whisper-models/ggml-large-v3-turbo.bin \
+  "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
+```
+
+Available GGML model filenames:
+
+| Short name | File |
+|-----------|------|
+| `large-v3-turbo` | `ggml-large-v3-turbo.bin` (~1.5 GB) |
+| `large-v3` | `ggml-large-v3.bin` (~3.1 GB) |
+| `medium` | `ggml-medium.bin` (~1.5 GB) |
+| `small` | `ggml-small.bin` (~466 MB) |
+| `base` | `ggml-base.bin` (~142 MB) |
+| `tiny` | `ggml-tiny.bin` (~74 MB) |
+
+Quantized variants (e.g. `ggml-large-v3-turbo-q5_0.bin`) are also detected automatically if the exact filename is not found.
+
+### Configure in .env
+
+```bash
+# Required: directory containing your .bin files
+SUBTITLER_WHISPER_CPP_MODEL_DIR=/Users/you/whisper-models
+
+# Optional: explicit binary path (leave unset to auto-detect from PATH)
+SUBTITLER_WHISPER_CPP_BINARY=/opt/homebrew/bin/whisper-cli
+
+# Optional: CPU thread count (0 = half of logical cores)
+SUBTITLER_WHISPER_CPP_THREADS=8
+
+# Optional: enable Core ML (requires matching build + .mlmodelc bundle)
+SUBTITLER_WHISPER_CPP_USE_COREML=false
+```
+
+### Availability check
+
+The UI engine dropdown shows **(not installed)** next to whisper.cpp if the binary is not found or the model directory is not configured. Selecting an unavailable engine is blocked at upload time with a clear error message.
+
+---
+
 ## Roadmap
 
 ### Implement `whisper_cpp` engine

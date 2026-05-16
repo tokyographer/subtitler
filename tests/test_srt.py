@@ -1,6 +1,11 @@
+import json
+import tempfile
+from pathlib import Path
+
 import pytest
 
 from app.subtitles.srt import format_timestamp, merge_segments, segments_to_srt, wrap_subtitle_text
+from app.transcribe.whisper_cpp_engine import _parse_json, _parse_srt_ts, _flag_rejected, _write_wav
 
 
 class TestFormatTimestamp:
@@ -186,6 +191,7 @@ class TestSegmentsToSrt:
         assert merged[0]["end"] == 3.0
 
     def test_segments_to_srt_merge_gap_param(self):
+
         segments = [
             {"start": 0.0, "end": 1.0, "text": "Hello"},
             {"start": 1.05, "end": 2.0, "text": "world"},
@@ -195,3 +201,109 @@ class TestSegmentsToSrt:
         assert "2\n" not in srt
         assert "Hello" in srt
         assert "world" in srt
+
+
+class TestWhisperCppHelpers:
+    def test_parse_srt_ts_zero(self):
+        assert _parse_srt_ts("00:00:00,000") == 0.0
+
+    def test_parse_srt_ts_seconds(self):
+        assert abs(_parse_srt_ts("00:00:04,500") - 4.5) < 0.001
+
+    def test_parse_srt_ts_hours(self):
+        assert abs(_parse_srt_ts("01:01:01,000") - 3661.0) < 0.001
+
+    def test_parse_srt_ts_bad_input(self):
+        assert _parse_srt_ts("garbage") == 0.0
+
+    def test_flag_rejected_unknown(self):
+        assert _flag_rejected("error: unknown argument --print-progress", "print-progress")
+
+    def test_flag_rejected_unrecognized(self):
+        assert _flag_rejected("unrecognized option: --print-progress", "print-progress")
+
+    def test_flag_rejected_false_when_other_error(self):
+        assert not _flag_rejected("model not found", "print-progress")
+
+    def test_parse_json_offsets(self, tmp_path):
+        payload = {
+            "transcription": [
+                {"offsets": {"from": 0, "to": 4500}, "text": " Hello world"},
+                {"offsets": {"from": 4500, "to": 8000}, "text": " Second line"},
+            ]
+        }
+        p = tmp_path / "out.json"
+        p.write_text(json.dumps(payload))
+        segs = _parse_json(p)
+        assert len(segs) == 2
+        assert segs[0].start == 0.0
+        assert abs(segs[0].end - 4.5) < 0.001
+        assert segs[0].text == "Hello world"
+        assert abs(segs[1].start - 4.5) < 0.001
+
+    def test_parse_json_timestamp_fallback(self, tmp_path):
+        """Segments without offsets fall back to timestamp strings."""
+        payload = {
+            "transcription": [
+                {
+                    "timestamps": {"from": "00:00:01,000", "to": "00:00:03,500"},
+                    "text": " Fallback test",
+                }
+            ]
+        }
+        p = tmp_path / "out.json"
+        p.write_text(json.dumps(payload))
+        segs = _parse_json(p)
+        assert len(segs) == 1
+        assert abs(segs[0].start - 1.0) < 0.001
+        assert abs(segs[0].end - 3.5) < 0.001
+
+    def test_parse_json_skips_empty_text(self, tmp_path):
+        payload = {
+            "transcription": [
+                {"offsets": {"from": 0, "to": 1000}, "text": ""},
+                {"offsets": {"from": 1000, "to": 2000}, "text": "  "},
+                {"offsets": {"from": 2000, "to": 3000}, "text": "Real text"},
+            ]
+        }
+        p = tmp_path / "out.json"
+        p.write_text(json.dumps(payload))
+        segs = _parse_json(p)
+        assert len(segs) == 1
+        assert segs[0].text == "Real text"
+
+    def test_parse_json_empty_transcription(self, tmp_path):
+        p = tmp_path / "out.json"
+        p.write_text(json.dumps({"transcription": []}))
+        assert _parse_json(p) == []
+
+    def test_write_wav_produces_valid_file(self, tmp_path):
+        import numpy as np
+        import wave
+
+        audio = np.zeros(16_000, dtype=np.float32)  # 1 second of silence
+        out = tmp_path / "test.wav"
+        _write_wav(audio, out)
+
+        assert out.exists()
+        with wave.open(str(out)) as wf:
+            assert wf.getnchannels() == 1
+            assert wf.getsampwidth() == 2
+            assert wf.getframerate() == 16_000
+            assert wf.getnframes() == 16_000
+
+    def test_write_wav_clips_values(self, tmp_path):
+        import numpy as np
+        import wave
+
+        audio = np.array([2.0, -2.0, 0.5], dtype=np.float32)
+        out = tmp_path / "clip.wav"
+        _write_wav(audio, out)
+
+        with wave.open(str(out)) as wf:
+            raw = wf.readframes(3)
+        import struct
+        samples = struct.unpack("<3h", raw)
+        assert samples[0] == 32767   # clipped +1
+        assert samples[1] == -32767  # clipped -1
+        assert abs(samples[2] - 16383) <= 1  # 0.5 * 32767

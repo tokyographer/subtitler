@@ -228,10 +228,17 @@ export default function App() {
 
                 <FieldGroup label="Engine">
                   <select value={engine} onChange={(e) => setEngine(e.target.value)}>
-                    {config.engines.map((eng) => (
-                      <option key={eng} value={eng}>{eng}</option>
+                    {Object.entries(config.engines).map(([eng, info]) => (
+                      <option key={eng} value={eng}>
+                        {eng}{info.available ? "" : " (not installed)"}
+                      </option>
                     ))}
                   </select>
+                  {config.engines[engine]?.available === false && (
+                    <div className="field-hint engine-warn">
+                      ⚠ {config.engines[engine].reason.split("\n")[0]}
+                    </div>
+                  )}
                 </FieldGroup>
               </div>
             )}

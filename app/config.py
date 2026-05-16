@@ -52,6 +52,17 @@ class Settings(BaseSettings):
     default_max_segment_duration: float = 0.0  # 0 = no cap
     default_merge_gap_ms: int = 0              # 0 = disabled
 
+    # ── whisper.cpp ───────────────────────────────────────────────────────
+    # Path to the whisper-cli binary. None = auto-detect from PATH and common locations.
+    whisper_cpp_binary: Optional[str] = None
+    # Directory containing ggml *.bin model files.
+    whisper_cpp_model_dir: Optional[Path] = None
+    # CPU threads for whisper.cpp. 0 = auto (half of os.cpu_count()).
+    whisper_cpp_threads: int = 0
+    # Enable Core ML inference (requires a Core ML-enabled whisper.cpp build
+    # and pre-converted *.mlmodelc model files alongside the .bin file).
+    whisper_cpp_use_coreml: bool = False
+
     # ── MLX model repos ───────────────────────────────────────────────────
     mlx_model_repos: dict = {
         "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
