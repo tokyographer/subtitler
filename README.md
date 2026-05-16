@@ -225,6 +225,77 @@ pytest tests/ -v
 
 ---
 
+## Performance Tuning (Apple Silicon M-series)
+
+### How the pipeline works
+
+1. **Upload** streams in 1 MB chunks — the server never holds the whole file in RAM during upload.
+2. **Audio extraction** pipes FFmpeg output directly to a numpy float32 array via `asyncio`. No WAV file is written to disk. FFmpeg uses `-hwaccel auto` which resolves to VideoToolbox on Apple Silicon and `-threads 0` for optimal CPU threading.
+3. **Transcription** runs in a thread pool via `asyncio.to_thread` so the API stays responsive. mlx-whisper executes on the Neural Engine / GPU cores via Apple MLX.
+4. **SRT generation** is CPU-only and completes in milliseconds.
+5. **Upload file** is deleted as soon as audio is decoded to RAM, freeing disk space immediately.
+
+### Expected speeds on M5 32 GB (large-v3-turbo)
+
+| Content length | Approx. transcription time |
+|---------------|---------------------------|
+| 5 min         | ~20–40 s                  |
+| 30 min        | ~2–4 min                  |
+| 60 min        | ~4–8 min                  |
+| 120 min       | ~8–16 min                 |
+
+`medium` and `small` models run ~2× and ~4× faster respectively with lower accuracy.
+
+### Model selection guide
+
+| Model | Size | Best for |
+|-------|------|---------|
+| `large-v3-turbo` | ~1.5 GB | Default — best accuracy/speed balance |
+| `large-v3` | ~3 GB | Maximum accuracy, slow |
+| `medium` | ~750 MB | Good accuracy, ~2× faster than large |
+| `small` | ~250 MB | Fast drafts, lower accuracy |
+| `tiny` | ~75 MB | Near-instant, rough output |
+
+### Environment variables
+
+```bash
+# Custom HuggingFace model cache (e.g. fast NVMe or external SSD)
+SUBTITLER_HF_CACHE_DIR=/Volumes/FastDrive/.cache/huggingface
+
+# Disable VideoToolbox (e.g. when testing on non-Apple hardware)
+SUBTITLER_FFMPEG_HWACCEL=false
+
+# Raise the upload size limit (default 4096 MB)
+SUBTITLER_MAX_FILE_SIZE_MB=8192
+```
+
+Put these in a `.env` file in the project root, or export them before starting the server.
+
+### RAM disk for uploads (optional, advanced)
+
+On macOS you can create a RAM disk for the upload staging area, which makes the upload-to-transcription handoff slightly faster:
+
+```bash
+# Create a 2 GB RAM disk
+diskutil erasevolume HFS+ 'SubtitlerRAM' $(hdiutil attach -nomount ram://4194304)
+
+# Point uploads at it
+echo 'SUBTITLER_STORAGE_UPLOADS=/Volumes/SubtitlerRAM/uploads' >> .env
+```
+
+The RAM disk is lost on reboot; uploads are deleted after transcription anyway.
+
+### Advanced options (UI)
+
+| Option | What it does |
+|--------|-------------|
+| **Translate to English** | Uses Whisper's built-in translation. Best for common languages (Spanish, French, German, Japanese, etc.). |
+| **Max line length** | Characters per SRT line before wrapping. YouTube recommends ≤ 42. Increase to 56–72 for widescreen players. |
+| **Max display duration** | Caps how long each subtitle block stays on screen. Useful for fast speech where Whisper creates very long segments. 0 = no cap. |
+| **Merge gap** | Joins consecutive segments separated by less than N milliseconds. Reduces subtitle flicker for presentations or podcasts. 0 = off. |
+
+---
+
 ## Roadmap
 
 ### Implement `whisper_cpp` engine

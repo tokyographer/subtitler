@@ -1,6 +1,6 @@
 import pytest
 
-from app.subtitles.srt import format_timestamp, segments_to_srt, wrap_subtitle_text
+from app.subtitles.srt import format_timestamp, merge_segments, segments_to_srt, wrap_subtitle_text
 
 
 class TestFormatTimestamp:
@@ -139,3 +139,59 @@ class TestSegmentsToSrt:
         srt = segments_to_srt(segments)
         for n in range(1, 6):
             assert f"{n}\n" in srt
+
+    def test_max_duration_caps_end_time(self):
+        segments = [{"start": 0.0, "end": 10.0, "text": "Long segment"}]
+        srt = segments_to_srt(segments, max_duration=3.0)
+        assert "00:00:03,000" in srt
+        assert "00:00:10,000" not in srt
+
+    def test_max_duration_zero_means_no_cap(self):
+        segments = [{"start": 0.0, "end": 10.0, "text": "Long segment"}]
+        srt = segments_to_srt(segments, max_duration=0.0)
+        assert "00:00:10,000" in srt
+
+    def test_merge_gap_joins_close_segments(self):
+        segments = [
+            {"start": 0.0, "end": 1.0, "text": "Hello"},
+            {"start": 1.1, "end": 2.0, "text": "world"},
+        ]
+        # 100 ms gap → merge at 150 ms threshold
+        merged = merge_segments(segments, gap_ms=150)
+        assert len(merged) == 1
+        assert "Hello" in merged[0]["text"]
+        assert "world" in merged[0]["text"]
+
+    def test_merge_gap_keeps_large_gap(self):
+        segments = [
+            {"start": 0.0, "end": 1.0, "text": "Hello"},
+            {"start": 2.0, "end": 3.0, "text": "world"},
+        ]
+        merged = merge_segments(segments, gap_ms=500)
+        assert len(merged) == 2  # 1000 ms gap > 500 ms threshold
+
+    def test_merge_gap_zero_is_noop(self):
+        segments = [
+            {"start": 0.0, "end": 1.0, "text": "A"},
+            {"start": 1.05, "end": 2.0, "text": "B"},
+        ]
+        assert merge_segments(segments, gap_ms=0) == segments
+
+    def test_merge_gap_preserves_endpoint(self):
+        segments = [
+            {"start": 0.0, "end": 1.0, "text": "A"},
+            {"start": 1.05, "end": 3.0, "text": "B"},
+        ]
+        merged = merge_segments(segments, gap_ms=200)
+        assert merged[0]["end"] == 3.0
+
+    def test_segments_to_srt_merge_gap_param(self):
+        segments = [
+            {"start": 0.0, "end": 1.0, "text": "Hello"},
+            {"start": 1.05, "end": 2.0, "text": "world"},
+        ]
+        srt = segments_to_srt(segments, merge_gap_ms=200)
+        # Only one block
+        assert "2\n" not in srt
+        assert "Hello" in srt
+        assert "world" in srt

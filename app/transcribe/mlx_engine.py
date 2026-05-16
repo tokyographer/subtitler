@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+import os
 import threading
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable, Union
 
 from app.config import settings
-from app.transcribe.base import Segment, TranscriptionEngine
+from app.transcribe.base import Segment, TranscriptionEngine, TranscriptionOptions
+
+if TYPE_CHECKING:
+    import numpy as np
 
 
 class MLXWhisperEngine(TranscriptionEngine):
     """
     Transcription engine backed by mlx-whisper.
-    Optimised for Apple Silicon via the MLX framework.
+    Runs natively on Apple Silicon via the MLX framework (Neural Engine + GPU).
     """
 
     @property
@@ -22,43 +26,73 @@ class MLXWhisperEngine(TranscriptionEngine):
         repo = settings.mlx_model_repos.get(model)
         if repo is None:
             raise ValueError(
-                f"Unknown model '{model}'. "
-                f"Available: {', '.join(settings.mlx_model_repos)}"
+                f"Unknown model '{model}'.\n"
+                f"Available models: {', '.join(settings.mlx_model_repos)}\n"
+                "Check your model name or add a new entry in config.py."
             )
         return repo
 
+    def _apply_hf_cache(self) -> None:
+        """Point HuggingFace downloads at the configured cache directory."""
+        if settings.hf_cache_dir:
+            cache = str(settings.hf_cache_dir)
+            os.environ.setdefault("HF_HOME", cache)
+            os.environ.setdefault("HUGGINGFACE_HUB_CACHE", cache)
+
     def transcribe(
         self,
-        audio_path: Path,
+        audio: Union[Path, "np.ndarray"],
         model: str,
         language: str | None,
+        options: TranscriptionOptions,
         progress_cb: Callable[[int], None] | None = None,
     ) -> list[Segment]:
         try:
             import mlx_whisper  # type: ignore
         except ImportError as exc:
             raise RuntimeError(
-                "mlx-whisper is not installed. Run: pip install mlx-whisper"
+                "mlx-whisper is not installed.\n"
+                "Run:  pip install mlx-whisper\n"
+                "Then restart the server."
             ) from exc
+
+        self._apply_hf_cache()
 
         repo = self._resolve_repo(model)
         lang = None if language in (None, "auto") else language
 
-        # mlx_whisper.transcribe is synchronous; the caller runs us in a thread.
-        # We simulate progress with a background ticker while transcription runs.
-        _stop_event = threading.Event()
+        # mlx_whisper.transcribe() is synchronous — the caller runs us in a
+        # thread via asyncio.to_thread().  Simulate progress with a background
+        # ticker while waiting for it to complete.
+        stop_event = threading.Event()
         if progress_cb:
-            self._start_progress_ticker(progress_cb, _stop_event)
+            self._start_progress_ticker(progress_cb, stop_event)
 
         try:
+            # Accept either a file path or a pre-decoded numpy array.
+            audio_input = audio if not isinstance(audio, Path) else str(audio)
+
             result = mlx_whisper.transcribe(
-                str(audio_path),
+                audio_input,
                 path_or_hf_repo=repo,
                 language=lang,
+                task=options.task,
+                temperature=options.temperature,
+                condition_on_previous_text=options.condition_on_previous_text,
+                no_speech_threshold=options.no_speech_threshold,
                 verbose=False,
             )
+        except Exception as exc:
+            err = str(exc)
+            if "not found" in err.lower() or "no such file" in err.lower():
+                raise RuntimeError(
+                    f"Model '{model}' could not be loaded from '{repo}'.\n"
+                    "The model cache may be incomplete. Delete it and retry:\n"
+                    f"  rm -rf ~/.cache/huggingface/hub/{repo.replace('/', '--')}"
+                ) from exc
+            raise
         finally:
-            _stop_event.set()
+            stop_event.set()
 
         if progress_cb:
             progress_cb(100)
@@ -74,31 +108,25 @@ class MLXWhisperEngine(TranscriptionEngine):
             if s.get("text", "").strip()
         ]
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
     @staticmethod
     def _start_progress_ticker(
         progress_cb: Callable[[int], None],
         stop_event: threading.Event,
     ) -> None:
         """
-        Tick progress from 0→98 using a logarithmic curve so it looks natural.
-        The caller sets stop_event when transcription finishes.
+        Logarithmic progress ticker: 0 → 98 % over ~120 s.
+        Calibrated for large-v3-turbo on M-series at ~4× real-time.
         """
         import math
         import time
 
-        def _run():
+        def _run() -> None:
             elapsed = 0.0
-            # Aim to reach ~90 % in ~120 s (reasonable for large-v3-turbo on M-series)
-            T = 120.0
+            T = 120.0  # time constant (seconds)
             while not stop_event.is_set():
                 pct = int(98 * (1 - math.exp(-elapsed / T)))
                 progress_cb(min(pct, 98))
-                time.sleep(1.0)
-                elapsed += 1.0
+                time.sleep(0.5)
+                elapsed += 0.5
 
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
+        threading.Thread(target=_run, daemon=True).start()

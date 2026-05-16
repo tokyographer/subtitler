@@ -7,17 +7,27 @@ export async function fetchConfig() {
 }
 
 /**
- * Upload a video file and start transcription.
  * @param {File} file
- * @param {{ language: string, model: string, engine: string }} options
- * @returns {Promise<{ job_id: string, status: string }>}
+ * @param {{
+ *   language: string,
+ *   model: string,
+ *   engine: string,
+ *   task: string,
+ *   max_line_chars: number,
+ *   max_segment_duration: number,
+ *   merge_gap_ms: number,
+ * }} options
  */
-export async function uploadVideo(file, { language, model, engine }) {
+export async function uploadVideo(file, options) {
   const body = new FormData();
   body.append("file", file);
-  body.append("language", language);
-  body.append("model", model);
-  body.append("engine", engine);
+  body.append("language", options.language);
+  body.append("model", options.model);
+  body.append("engine", options.engine);
+  body.append("task", options.task ?? "transcribe");
+  body.append("max_line_chars", String(options.max_line_chars ?? 42));
+  body.append("max_segment_duration", String(options.max_segment_duration ?? 0));
+  body.append("merge_gap_ms", String(options.merge_gap_ms ?? 0));
 
   const res = await fetch(`${BASE}/jobs/upload`, { method: "POST", body });
   const data = await res.json();
@@ -25,10 +35,6 @@ export async function uploadVideo(file, { language, model, engine }) {
   return data;
 }
 
-/**
- * Poll job status once.
- * @param {string} jobId
- */
 export async function fetchJob(jobId) {
   const res = await fetch(`${BASE}/jobs/${jobId}`);
   if (!res.ok) throw new Error("Failed to fetch job");
@@ -37,8 +43,6 @@ export async function fetchJob(jobId) {
 
 /**
  * Open an SSE connection for live log + status updates.
- * @param {string} jobId
- * @param {{ onLog: Function, onStatus: Function, onDone: Function, onError: Function }} callbacks
  * @returns {EventSource}
  */
 export function subscribeLogs(jobId, { onLog, onStatus, onDone, onError }) {
@@ -49,23 +53,14 @@ export function subscribeLogs(jobId, { onLog, onStatus, onDone, onError }) {
       const data = JSON.parse(event.data);
       if (data.type === "log") onLog?.(data.message);
       else if (data.type === "status") onStatus?.(data.status, data.progress);
-      else if (data.type === "done") {
-        onDone?.(data.status);
-        es.close();
-      } else if (data.type === "error") {
-        onError?.(data.message);
-        es.close();
-      }
+      else if (data.type === "done") { onDone?.(data.status); es.close(); }
+      else if (data.type === "error") { onError?.(data.message); es.close(); }
     } catch {
       // ignore parse errors
     }
   };
 
-  es.onerror = () => {
-    onError?.("Connection to server lost.");
-    es.close();
-  };
-
+  es.onerror = () => { onError?.("Connection to server lost."); es.close(); };
   return es;
 }
 
