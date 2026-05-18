@@ -1,30 +1,32 @@
 # Subtitler
 
-Local macOS transcription app that turns media files into YouTube-compatible `.srt` subtitles.
+Local macOS app that turns video and audio files into YouTube-compatible `.srt` subtitle files and readable transcripts.
 
-Runs fully on-device on Apple Silicon using `mlx-whisper`.
-No cloud APIs. No Docker required.
+Runs fully on-device on Apple Silicon using `mlx-whisper`. No cloud APIs required for transcription. No Docker.
 
 ---
 
 ## Features
 
-- FastAPI backend with background transcription jobs
-- React + Vite frontend with drag-and-drop upload
-- Live progress and logs via Server-Sent Events (SSE)
-- YouTube-compatible SRT timestamp formatting
-- Local-only processing (media never leaves your machine)
-- File validation by extension and magic bytes
-- Automatic cleanup of temporary upload/audio files
+- Drag-and-drop upload — video and audio files accepted
+- Dual transcription engine: **mlx-whisper** (default, Apple Silicon) and **whisper.cpp** (Metal/Core ML)
+- Real-time progress and logs via Server-Sent Events (SSE)
+- Multilingual-aware — preserves all languages by default; focus language is a Whisper decoding hint, not a content filter
+- Hallucination/repetition-loop detection with two-factor guard — always preserves the raw SRT, generates a clean `safe_transcript.srt` separately
+- On-demand **transcript reconstruction** via Claude API — merges subtitle fragments into a clean, readable `.md` document
+- YouTube-compatible SRT output (42-char line wrap, millisecond timestamps)
+- Separate optional interpreter/translation-track filter for simultaneous-interpretation audio
+- File validation by extension and magic bytes (MIME sniffing)
+- Automatic cleanup of upload and audio artifacts after transcription
 
 ---
 
-## Current Engine Status
+## Engine Status
 
-- `mlx`: fully supported (default)
-- `whisper_cpp`: exposed in API/UI but not yet implemented
-
-If `whisper_cpp` is selected, the job will fail with a "not implemented" error until `app/transcribe/whisper_cpp_engine.py` is implemented.
+| Engine | Status | Notes |
+|--------|--------|-------|
+| `mlx` | ✅ Default | Apple Silicon Neural Engine + GPU via MLX framework |
+| `whisper_cpp` | ✅ Supported | Metal GPU; optional Core ML for max speed |
 
 ---
 
@@ -47,112 +49,154 @@ If `whisper_cpp` is selected, the job will fail with a "not implemented" error u
 brew install ffmpeg
 ```
 
-### 2. Open the project
+### 2. Install backend dependencies
 
 ```bash
 cd /path/to/subtitler
+uv sync          # preferred
+# or: pip install -r requirements.txt
 ```
 
-### 3. Create and activate Python virtual environment
+### 3. Configure environment
 
 ```bash
-python3 -m venv .venv
+cp .env.example .env
+# Edit .env — add SUBTITLER_ANTHROPIC_API_KEY if you want transcript generation
+```
+
+### 4. Run the backend
+
+```bash
 source .venv/bin/activate
-```
-
-### 4. Install backend dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 5. Run backend
-
-```bash
 uvicorn app.main:app --reload --port 8001
 ```
 
-### 6. Run frontend (dev mode)
-
-In a second terminal:
+### 5. Run the frontend (dev mode)
 
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev      # http://localhost:5173
 ```
 
-Open `http://localhost:5173`.
-
-### 7. Optional production frontend build
+### Production build (single server on port 8001)
 
 ```bash
-cd frontend
-npm run build
+cd frontend && npm run build
 cd ..
-uvicorn app.main:app --port 8001
+uvicorn app.main:app --port 8001   # http://localhost:8001
 ```
-
-Open `http://localhost:8001`.
 
 ---
 
 ## Usage
 
-1. Drop or browse for a file.
-2. Choose language, model, and engine.
-3. Click **Start Transcription**.
-4. Watch real-time logs and progress.
-5. Download the generated `.srt` file when complete.
+1. Drop or browse for a video or audio file.
+2. Choose **Focus language**, **Model**, and **Engine**.
+3. Optionally expand **Advanced options** to enable transcript generation or the interpreter filter.
+4. Click **Start Transcription**.
+5. Watch real-time logs and progress bar.
+6. Download the `.srt` file when complete.
+7. Optionally click **Generate Transcript** for a clean readable document.
 
-### Accepted file extensions (backend enforced)
+### Accepted formats
 
-- `.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`
-- `.m4v`, `.mpg`, `.mpeg`, `.wmv`, `.flv`, `.3gp`
+**Video:** `.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`, `.m4v`, `.mpg`, `.mpeg`, `.wmv`, `.flv`, `.3gp`
 
-Note: The frontend file picker currently shows some audio formats, but backend validation only accepts the extensions listed above.
+**Audio:** `.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`, `.aac`, `.opus`, `.wma`, `.aiff`, `.aif`
 
 ### Job lifecycle
 
-```text
-uploaded -> extracting_audio -> transcribing -> generating_srt -> completed
-                                                             -> failed
 ```
+uploaded → extracting_audio → transcribing → generating_srt → completed
+                                                             → failed
+```
+
+### Output files
+
+| File | When created | Contents |
+|------|-------------|---------|
+| `raw_transcript.srt` | Always | Full Whisper output including any detected loop |
+| `safe_transcript.srt` | Loop detected | Clean segments before the loop started |
+| `postprocess_report.json` | Loop detected | Loop details: start time, repeated text, segment counts |
+| `transcript.md` | On request | Claude-reconstructed readable transcript |
+
+---
+
+## Advanced Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| **Generate transcript after SRT** | Off | Automatically calls Claude API to reconstruct a readable transcript when the SRT completes. Requires `SUBTITLER_ANTHROPIC_API_KEY`. |
+| **Filter interpreter / translation track** | Off | Removes live interpreter segments when the audio has a main speaker followed by a translator repeating the content in another language. Multilingual content is always preserved by default — this filter is only for simultaneous-interpretation recordings. |
+
+---
+
+## Transcript Generation
+
+When enabled, the transcript is reconstructed by Claude from the completed SRT:
+
+- Strips all timestamps and sequence numbers
+- Merges subtitle fragments into complete sentences and paragraphs
+- Structures content into sections with headings
+- Preserves all languages — never translates
+- Marks unclear or unintelligible passages as `[?]` instead of inventing content
+- Notes transcription artifacts, language switches, and suspected missing audio
+
+Requires `SUBTITLER_ANTHROPIC_API_KEY` in `.env`.
+
+---
+
+## Hallucination Detection
+
+Whisper can enter repetition loops on long or difficult audio. The detector uses a two-factor guard:
+
+1. **Run length ≥ 20** consecutive identical segments
+2. **Loop represents ≥ 10%** of all segments
+
+Both conditions must be met. This prevents short conversational repetition ("Right, right, right…" × 11 in a 1,000-segment file) from being misclassified as a hallucination.
+
+When a loop is detected:
+- `raw_transcript.srt` always contains the full output
+- `safe_transcript.srt` contains only the clean segments before the loop
+- The UI warning shows focus language, loop start time, repeated text, and segment count
+- If a specific focus language was already set, the advice does **not** say "try setting a language"
 
 ---
 
 ## Configuration
 
-Settings are loaded from environment variables with prefix `SUBTITLER_`.
-A local `.env` file is also supported.
+All settings use the `SUBTITLER_` prefix and can be set in `.env` or as environment variables.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SUBTITLER_MAX_FILE_SIZE_MB` | `4096` | Max upload size in MB |
-| `SUBTITLER_DEFAULT_MODEL` | `large-v3-turbo` | Default model |
-| `SUBTITLER_DEFAULT_LANGUAGE` | `auto` | Default language |
-| `SUBTITLER_DEFAULT_ENGINE` | `mlx` | Default engine |
-
-Example:
-
-```bash
-SUBTITLER_DEFAULT_MODEL=medium uvicorn app.main:app --reload --port 8001
-```
+| `SUBTITLER_ANTHROPIC_API_KEY` | — | Required for transcript generation |
+| `SUBTITLER_TRANSCRIPT_MODEL` | `claude-sonnet-4-6` | Claude model for transcript reconstruction |
+| `SUBTITLER_DEFAULT_MODEL` | `large-v3-turbo` | Default Whisper model |
+| `SUBTITLER_DEFAULT_LANGUAGE` | `auto` | Default focus language |
+| `SUBTITLER_DEFAULT_ENGINE` | `mlx` | `mlx` or `whisper_cpp` |
+| `SUBTITLER_MAX_FILE_SIZE_MB` | `4096` | Upload size cap |
+| `SUBTITLER_HF_CACHE_DIR` | `~/.cache/huggingface` | Custom model cache path |
+| `SUBTITLER_FFMPEG_HWACCEL` | `true` | VideoToolbox on Apple Silicon |
+| `SUBTITLER_WHISPER_CPP_BINARY` | auto | Explicit path to `whisper-cli` |
+| `SUBTITLER_WHISPER_CPP_MODEL_DIR` | — | Directory containing GGML `.bin` files |
+| `SUBTITLER_WHISPER_CPP_THREADS` | `0` (auto) | CPU thread count for whisper.cpp |
+| `SUBTITLER_WHISPER_CPP_USE_COREML` | `false` | Core ML inference (requires matching build) |
 
 ---
 
 ## Models
 
-Current model keys exposed by `/api/config`:
+Models are downloaded automatically from HuggingFace on first use and cached locally. Subsequent runs load from disk.
 
-- `large-v3-turbo`
-- `large-v3`
-- `medium`
-- `small`
-- `base`
-- `tiny`
-
-These map to MLX-compatible HuggingFace repositories in `app/config.py`.
+| Model | Size | Best for |
+|-------|------|---------|
+| `large-v3-turbo` | ~1.5 GB | Default — best accuracy/speed balance |
+| `large-v3` | ~3 GB | Maximum accuracy, slower |
+| `medium` | ~750 MB | Good accuracy, ~2× faster |
+| `small` | ~250 MB | Fast drafts |
+| `base` | ~100 MB | Quick checks |
+| `tiny` | ~75 MB | Near-instant, rough output |
 
 ---
 
@@ -160,48 +204,126 @@ These map to MLX-compatible HuggingFace repositories in `app/config.py`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/jobs/upload` | Upload file and start transcription job |
-| `GET` | `/api/jobs/{job_id}` | Get job metadata/status |
-| `GET` | `/api/jobs/{job_id}/logs` | SSE stream of logs and status |
-| `GET` | `/api/jobs/{job_id}/download-srt` | Download completed `.srt` |
-| `GET` | `/api/config` | Get models, languages, engines, defaults |
+| `POST` | `/api/jobs/upload` | Upload file and start transcription |
+| `GET` | `/api/jobs/{job_id}` | Job metadata and status |
+| `GET` | `/api/jobs/{job_id}/logs` | SSE stream — logs, status, progress |
+| `GET` | `/api/jobs/{job_id}/download-srt` | Download best SRT (safe if loop detected, raw otherwise) |
+| `GET` | `/api/jobs/{job_id}/download-raw-srt` | Download raw SRT (always, includes any loop) |
+| `POST` | `/api/jobs/{job_id}/transcript` | Start transcript generation (async) |
+| `GET` | `/api/jobs/{job_id}/download-transcript` | Download reconstructed transcript `.md` |
+| `GET` | `/api/config` | Models, languages, engines, defaults |
+
+---
+
+## Performance (Apple Silicon M-series)
+
+### Pipeline
+
+1. **Upload** — streamed in 1 MB chunks, never held fully in RAM
+2. **Audio extraction** — FFmpeg piped directly to a float32 numpy array; no WAV written to disk; VideoToolbox hardware acceleration on Apple Silicon
+3. **Transcription** — runs in a thread pool via `asyncio.to_thread`; mlx-whisper uses the Neural Engine and GPU cores
+4. **SRT generation** — CPU-only, completes in milliseconds
+5. **Cleanup** — upload file deleted as soon as audio is in RAM
+
+### Expected speeds (large-v3-turbo on M-series)
+
+| Content length | Transcription time |
+|---------------|-------------------|
+| 5 min | ~20–40 s |
+| 30 min | ~2–4 min |
+| 60 min | ~4–8 min |
+| 90 min | ~6–12 min |
+
+`medium` and `small` run ~2× and ~4× faster with lower accuracy.
+
+---
+
+## whisper.cpp Engine
+
+An alternative backend using Metal GPU (or Core ML Neural Engine). Useful for CPU-only machines or when you want a second engine option.
+
+### Install via Homebrew
+
+```bash
+brew install whisper-cpp
+```
+
+Verify: `whisper-cli --help`
+
+### Build from source with Metal
+
+```bash
+git clone https://github.com/ggerganov/whisper.cpp
+cd whisper.cpp
+cmake -B build -DGGML_METAL=ON
+cmake --build build -j$(sysctl -n hw.logicalcpu) --config Release
+```
+
+### Build with Core ML (fastest)
+
+```bash
+pip install coremltools
+cmake -B build -DWHISPER_COREML=ON
+cmake --build build -j$(sysctl -n hw.logicalcpu)
+
+# Convert model
+cd models
+python convert-whisper-to-coreml.py --model large-v3-turbo
+```
+
+Enable in `.env`:
+```
+SUBTITLER_WHISPER_CPP_USE_COREML=true
+```
+
+### Download GGML models
+
+```bash
+mkdir -p ~/whisper-models
+curl -L -o ~/whisper-models/ggml-large-v3-turbo.bin \
+  "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
+```
+
+### Configure
+
+```bash
+SUBTITLER_WHISPER_CPP_MODEL_DIR=/Users/you/whisper-models
+SUBTITLER_WHISPER_CPP_BINARY=/opt/homebrew/bin/whisper-cli   # optional
+```
+
+The UI shows **(not installed)** if the binary or model directory is missing.
 
 ---
 
 ## Project Structure
 
-```text
+```
 subtitler/
 ├── app/
-│   ├── main.py
-│   ├── config.py
-│   ├── jobs.py
-│   ├── audio.py
+│   ├── main.py                  # FastAPI app, routes, SSE, background pipeline
+│   ├── config.py                # Pydantic Settings (SUBTITLER_ prefix)
+│   ├── jobs.py                  # Job dataclass + thread-safe JobStore
+│   ├── audio.py                 # FFmpeg pipe → float32 numpy array
+│   ├── transcript.py            # Claude API transcript reconstruction
 │   ├── subtitles/
-│   │   └── srt.py
+│   │   └── srt.py               # Timestamp formatting, line wrap, SRT output
 │   ├── transcribe/
-│   │   ├── base.py
-│   │   ├── mlx_engine.py
-│   │   └── whisper_cpp_engine.py
+│   │   ├── base.py              # Abstract TranscriptionEngine, TranscriptionOptions, Segment
+│   │   ├── mlx_engine.py        # mlx-whisper engine (Apple Silicon default)
+│   │   ├── whisper_cpp_engine.py # whisper.cpp CLI subprocess engine
+│   │   └── postprocess.py       # Loop detection (detect_loop), translation filter
 │   └── utils/
-│       └── files.py
+│       └── files.py             # Upload validation, streaming save, cleanup
 ├── frontend/
-│   ├── src/
-│   │   ├── App.jsx
-│   │   ├── App.css
-│   │   ├── api.js
-│   │   └── main.jsx
-│   ├── index.html
-│   ├── package.json
-│   └── vite.config.js
-├── storage/
-│   ├── uploads/
-│   ├── audio/
-│   └── outputs/
+│   └── src/
+│       ├── App.jsx              # Single-component UI
+│       ├── App.css
+│       └── api.js               # Fetch wrappers for all API endpoints
 ├── tests/
-│   └── test_srt.py
-├── requirements.txt
-└── .gitignore
+│   ├── test_srt.py
+│   └── test_postprocess.py
+├── .env.example
+└── requirements.txt
 ```
 
 ---
@@ -211,192 +333,20 @@ subtitler/
 ```bash
 source .venv/bin/activate
 pytest tests/ -v
+
+# Single file
+pytest tests/test_postprocess.py -v
 ```
+
+69 tests covering SRT generation, timestamp formatting, loop detection, multilingual preservation, and translation filter isolation.
 
 ---
 
-## Security Notes
+## Security
 
-- Filenames are sanitized to reduce path traversal risk.
-- File type is validated by extension and magic-byte detection.
-- Upload size limits are enforced while streaming.
-- Temporary upload/audio artifacts are cleaned up on success and failure.
-- Processing is local-only.
-
----
-
-## Performance Tuning (Apple Silicon M-series)
-
-### How the pipeline works
-
-1. **Upload** streams in 1 MB chunks — the server never holds the whole file in RAM during upload.
-2. **Audio extraction** pipes FFmpeg output directly to a numpy float32 array via `asyncio`. No WAV file is written to disk. FFmpeg uses `-hwaccel auto` which resolves to VideoToolbox on Apple Silicon and `-threads 0` for optimal CPU threading.
-3. **Transcription** runs in a thread pool via `asyncio.to_thread` so the API stays responsive. mlx-whisper executes on the Neural Engine / GPU cores via Apple MLX.
-4. **SRT generation** is CPU-only and completes in milliseconds.
-5. **Upload file** is deleted as soon as audio is decoded to RAM, freeing disk space immediately.
-
-### Expected speeds on M5 32 GB (large-v3-turbo)
-
-| Content length | Approx. transcription time |
-|---------------|---------------------------|
-| 5 min         | ~20–40 s                  |
-| 30 min        | ~2–4 min                  |
-| 60 min        | ~4–8 min                  |
-| 120 min       | ~8–16 min                 |
-
-`medium` and `small` models run ~2× and ~4× faster respectively with lower accuracy.
-
-### Model selection guide
-
-| Model | Size | Best for |
-|-------|------|---------|
-| `large-v3-turbo` | ~1.5 GB | Default — best accuracy/speed balance |
-| `large-v3` | ~3 GB | Maximum accuracy, slow |
-| `medium` | ~750 MB | Good accuracy, ~2× faster than large |
-| `small` | ~250 MB | Fast drafts, lower accuracy |
-| `tiny` | ~75 MB | Near-instant, rough output |
-
-### Environment variables
-
-```bash
-# Custom HuggingFace model cache (e.g. fast NVMe or external SSD)
-SUBTITLER_HF_CACHE_DIR=/Volumes/FastDrive/.cache/huggingface
-
-# Disable VideoToolbox (e.g. when testing on non-Apple hardware)
-SUBTITLER_FFMPEG_HWACCEL=false
-
-# Raise the upload size limit (default 4096 MB)
-SUBTITLER_MAX_FILE_SIZE_MB=8192
-```
-
-Put these in a `.env` file in the project root, or export them before starting the server.
-
-### RAM disk for uploads (optional, advanced)
-
-On macOS you can create a RAM disk for the upload staging area, which makes the upload-to-transcription handoff slightly faster:
-
-```bash
-# Create a 2 GB RAM disk
-diskutil erasevolume HFS+ 'SubtitlerRAM' $(hdiutil attach -nomount ram://4194304)
-
-# Point uploads at it
-echo 'SUBTITLER_STORAGE_UPLOADS=/Volumes/SubtitlerRAM/uploads' >> .env
-```
-
-The RAM disk is lost on reboot; uploads are deleted after transcription anyway.
-
-### Advanced options (UI)
-
-| Option | What it does |
-|--------|-------------|
-| **Translate to English** | Uses Whisper's built-in translation. Best for common languages (Spanish, French, German, Japanese, etc.). |
-| **Max line length** | Characters per SRT line before wrapping. YouTube recommends ≤ 42. Increase to 56–72 for widescreen players. |
-| **Max display duration** | Caps how long each subtitle block stays on screen. Useful for fast speech where Whisper creates very long segments. 0 = no cap. |
-| **Merge gap** | Joins consecutive segments separated by less than N milliseconds. Reduces subtitle flicker for presentations or podcasts. 0 = off. |
-
----
-
-## whisper.cpp Engine (optional)
-
-whisper.cpp is an alternative transcription backend. It uses Metal GPU automatically on Apple Silicon. It is slower than mlx-whisper for most use cases but may be preferred for CPU-only machines or when you need the widest codec compatibility.
-
-### Installation via Homebrew (recommended)
-
-```bash
-brew install whisper-cpp
-```
-
-Verify: `whisper-cli --help`
-
-### Build from source with Metal (Apple Silicon)
-
-```bash
-git clone https://github.com/ggerganov/whisper.cpp
-cd whisper.cpp
-cmake -B build -DGGML_METAL=ON
-cmake --build build -j$(sysctl -n hw.logicalcpu) --config Release
-# Binary is at: build/bin/whisper-cli
-```
-
-### Build with Core ML (fastest on-device inference)
-
-Core ML uses the Neural Engine and can be significantly faster than Metal for supported models.
-
-```bash
-# Requires Xcode and Python coremltools
-pip install coremltools
-
-# Build whisper.cpp with Core ML enabled
-cmake -B build -DWHISPER_COREML=ON
-cmake --build build -j$(sysctl -n hw.logicalcpu)
-
-# Convert a model to Core ML format
-cd models
-python convert-whisper-to-coreml.py --model large-v3-turbo
-# This creates: ggml-large-v3-turbo-encoder.mlmodelc/ next to the .bin file
-```
-
-Then enable Core ML in `.env`:
-```
-SUBTITLER_WHISPER_CPP_USE_COREML=true
-```
-
-### Download models
-
-whisper.cpp uses GGML `.bin` model files, separate from the MLX models.
-
-```bash
-# Create a model directory
-mkdir -p ~/whisper-models
-
-# Download with the bundled script (from a whisper.cpp repo clone)
-bash models/download-ggml-model.sh large-v3-turbo ~/whisper-models
-
-# Or download directly from HuggingFace
-curl -L -o ~/whisper-models/ggml-large-v3-turbo.bin \
-  "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
-```
-
-Available GGML model filenames:
-
-| Short name | File |
-|-----------|------|
-| `large-v3-turbo` | `ggml-large-v3-turbo.bin` (~1.5 GB) |
-| `large-v3` | `ggml-large-v3.bin` (~3.1 GB) |
-| `medium` | `ggml-medium.bin` (~1.5 GB) |
-| `small` | `ggml-small.bin` (~466 MB) |
-| `base` | `ggml-base.bin` (~142 MB) |
-| `tiny` | `ggml-tiny.bin` (~74 MB) |
-
-Quantized variants (e.g. `ggml-large-v3-turbo-q5_0.bin`) are also detected automatically if the exact filename is not found.
-
-### Configure in .env
-
-```bash
-# Required: directory containing your .bin files
-SUBTITLER_WHISPER_CPP_MODEL_DIR=/Users/you/whisper-models
-
-# Optional: explicit binary path (leave unset to auto-detect from PATH)
-SUBTITLER_WHISPER_CPP_BINARY=/opt/homebrew/bin/whisper-cli
-
-# Optional: CPU thread count (0 = half of logical cores)
-SUBTITLER_WHISPER_CPP_THREADS=8
-
-# Optional: enable Core ML (requires matching build + .mlmodelc bundle)
-SUBTITLER_WHISPER_CPP_USE_COREML=false
-```
-
-### Availability check
-
-The UI engine dropdown shows **(not installed)** next to whisper.cpp if the binary is not found or the model directory is not configured. Selecting an unavailable engine is blocked at upload time with a clear error message.
-
----
-
-## Roadmap
-
-### Implement `whisper_cpp` engine
-
-1. Install `pywhispercpp`.
-2. Download a `.bin` model from whisper.cpp releases.
-3. Implement `WhisperCppEngine.transcribe()` in `app/transcribe/whisper_cpp_engine.py`.
-4. Add dedicated model mapping/validation for whisper.cpp models if needed.
+- File type validated by extension **and** magic bytes — extension alone is not trusted
+- Upload size enforced while streaming — never fully buffered before validation
+- CORS restricted to localhost origins — `allow_origins=["*"]` is never used
+- Uploaded files and SRT output stored in `storage/` (gitignored)
+- Anthropic API key loaded from environment only — never logged or exposed in API responses
+- No PII logged — only job IDs and file hashes
