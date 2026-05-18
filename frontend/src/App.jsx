@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  downloadRawSrtUrl,
   downloadSrtUrl,
   downloadTranscriptUrl,
   fetchConfig,
@@ -48,6 +49,16 @@ function FieldGroup({ label, children, hint }) {
   );
 }
 
+function fmtTime(secs) {
+  if (secs == null) return "?";
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = Math.floor(secs % 60);
+  return h > 0
+    ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+    : `${m}:${String(s).padStart(2, "0")}`;
+}
+
 export default function App() {
   const [config, setConfig] = useState(null);
   const [ffmpegWarning, setFfmpegWarning] = useState(null);
@@ -59,6 +70,7 @@ export default function App() {
   const [model, setModel] = useState("large-v3-turbo");
   const [engine, setEngine] = useState("mlx");
   const [autoTranscript, setAutoTranscript] = useState(false);
+  const [filterTranslation, setFilterTranslation] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Job state
@@ -165,7 +177,10 @@ export default function App() {
     setProgress(0);
     setUploading(true);
     try {
-      const { job_id } = await uploadVideo(file, { language, model, engine });
+      const { job_id } = await uploadVideo(file, {
+        language, model, engine,
+        filter_translation_track: filterTranslation,
+      });
       setJobId(job_id);
       setJobStatus("uploaded");
     } catch (err) {
@@ -186,7 +201,7 @@ export default function App() {
     setTranscriptError(null);
     setHallucinationWarning(null);
     setAutoTranscript(false);
-
+    setFilterTranslation(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -313,6 +328,23 @@ export default function App() {
                   </span>
                 </label>
 
+                {/* Translation filter */}
+                <label className="field-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={filterTranslation}
+                    onChange={(e) => setFilterTranslation(e.target.checked)}
+                  />
+                  <span>
+                    <strong>Filter interpreter / translation track</strong>
+                    <span className="field-hint" style={{ display: "block", marginTop: 2 }}>
+                      Removes live interpreter segments when audio has a main speaker
+                      followed by a translator repeating the content in another language.
+                      Off by default — multilingual content is always preserved.
+                    </span>
+                  </span>
+                </label>
+
               </div>
             )}
 
@@ -359,12 +391,40 @@ export default function App() {
 
           {hallucinationWarning && (
             <div className="card">
-              <div className="warn-box">
-                <strong>⚠ Repetition loop detected — {hallucinationWarning.segmentsDropped} segments removed.</strong>
-                {" "}The SRT contains only the content before the loop started. To fix this,
-                re-transcribe with the <strong>Focus language</strong> set to a specific language
-                (e.g. English or Spanish) instead of Auto-detect. If the loop persists, try a
-                smaller model such as <em>medium</em> or <em>small</em>.
+              <div className="warn-box loop-warn">
+                <div className="loop-warn-title">⚠ Probable Whisper hallucination loop detected</div>
+                <table className="loop-warn-table">
+                  <tbody>
+                    <tr>
+                      <td>Focus language</td>
+                      <td>{hallucinationWarning.loopInfo?.focus_language
+                        ? (config?.languages?.[hallucinationWarning.loopInfo.focus_language] ?? hallucinationWarning.loopInfo.focus_language)
+                        : "Auto-detect"}</td>
+                    </tr>
+                    <tr>
+                      <td>Loop starts at</td>
+                      <td>
+                        segment #{(hallucinationWarning.loopInfo?.loop_start_index ?? 0) + 1}
+                        {" "}({fmtTime(hallucinationWarning.loopInfo?.loop_start_time)})
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Repeated text</td>
+                      <td><em>"{hallucinationWarning.loopInfo?.repeated_text}"</em></td>
+                    </tr>
+                    <tr>
+                      <td>Segments removed</td>
+                      <td>{hallucinationWarning.segmentsDropped} — moved to raw_transcript.srt</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div className="loop-warn-hint">
+                  {hallucinationWarning.loopInfo?.focus_language
+                    ? "Try a smaller model (medium or small) or check audio quality."
+                    : "Try setting a specific Focus language (e.g. English or Spanish) or use a smaller model."}
+                  {" "}The safe .srt contains only the content before the loop.
+                  Raw transcript (with loop intact) is preserved and available below.
+                </div>
               </div>
             </div>
           )}
@@ -372,8 +432,13 @@ export default function App() {
           {jobStatus === "completed" && (
             <div className="card" style={{ textAlign: "center" }}>
               <a className="btn-download" href={downloadSrtUrl(jobId)} download>
-                ⬇ Download .srt file
+                {hallucinationWarning ? "⬇ Download safe .srt" : "⬇ Download .srt file"}
               </a>
+              {hallucinationWarning && (
+                <a className="btn-download-raw" href={downloadRawSrtUrl(jobId)} download>
+                  ⬇ Download raw .srt (includes loop)
+                </a>
+              )}
               <div className="transcript-section">
                 {transcriptStatus === null && (
                   <button className="btn-transcript" onClick={handleGenerateTranscript}>

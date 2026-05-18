@@ -12,6 +12,9 @@ export async function uploadVideo(file, options) {
   body.append("language", options.language);
   body.append("model", options.model);
   body.append("engine", options.engine);
+  if (options.filter_translation_track) {
+    body.append("filter_translation_track", "true");
+  }
 
   const res = await fetch(`${BASE}/jobs/upload`, { method: "POST", body });
   const data = await res.json();
@@ -41,6 +44,7 @@ export function subscribeLogs(jobId, { onLog, onStatus, onDone, onError }) {
         onDone?.(data.status, {
           hallucinationWarning: data.hallucination_warning,
           segmentsDropped: data.segments_dropped,
+          loopInfo: data.loop_info,
         });
         es.close();
       }
@@ -56,6 +60,10 @@ export function subscribeLogs(jobId, { onLog, onStatus, onDone, onError }) {
 
 export function downloadSrtUrl(jobId) {
   return `${BASE}/jobs/${jobId}/download-srt`;
+}
+
+export function downloadRawSrtUrl(jobId) {
+  return `${BASE}/jobs/${jobId}/download-raw-srt`;
 }
 
 export async function generateTranscript(jobId) {

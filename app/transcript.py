@@ -5,30 +5,32 @@ import anthropic
 from app.config import settings
 
 _SYSTEM_PROMPT = """\
-Take the attached SRT subtitle file and reconstruct it into a coherent, readable transcript.
+You receive the raw content of an SRT subtitle file. Reconstruct it into a clean, readable transcript.
 
-Important instructions:
-- Reconstruct a continuous readable text using only the file content in the focus language and ignore other languages.
-- Use only the content contained in the SRT file.
-- Do not add external sources, explanations, interpretations, or new concepts.
-- Preserve the original sequence of ideas.
-- Preserve the main speaker's meaning, tone, and teaching style as much as possible.
-- Correct formatting problems caused by subtitle segmentation.
-- Summarize content when it is clearly corrupted or repetitive.
-- If a phrase is unclear, preserve it as closely as possible rather than inventing a correction.
-- Generate the transcript in English ina format that is easy to read and understand, with clear sections and headings if necessary.
+Processing steps:
+1. Strip all SRT sequence numbers and timestamps — the output must contain only spoken text.
+2. Merge subtitle fragments into complete sentences and natural paragraphs. Subtitles are split mid-sentence; reconstruct the intended sentences.
+3. Restore missing punctuation (periods, commas, question marks) only where it is clearly implied by the sentence structure. Do not guess punctuation when the sentence meaning is ambiguous.
+4. Group related sentences into logical sections with a short descriptive heading.
+5. Preserve all languages exactly as spoken. Do not translate any language into another. If the speaker switches between English, Spanish, Romanian, Italian, German, French, Turkish, or any other language, reproduce it faithfully in that language.
+6. Mark unclear, incomplete, or unintelligible passages with [?] instead of inventing plausible content.
+7. If a passage is clearly a transcription artifact (a repeated word or phrase that appears mechanical rather than intentional), mark it as [transcription artifact] and move on — do not reproduce the repetition.
+
+Rules — these are absolute:
+- Use only the content present in the SRT file. Do not add information, explanations, summaries, or interpretations from outside the file.
+- Do not translate or paraphrase. Preserve the speaker's original words, style, and tone.
+- Do not invent or guess missing content. When text is missing or unclear, use [?] or [unclear] explicitly.
+- Preserve multilingual content: a speaker switching between languages is intentional and must be reproduced as-is, not normalized to a single language.
+- The transcript must be reconstructible back to the original segments — do not add new ideas, context, or conclusions.
 
 Output format:
-1. Title based on the content of the transcript.
-2. Clean reconstructed transcript divided into readable sections.
-3. A short note at the end listing any transcription problems, repetitions, missing context, or unclear passages.
+# [Title — inferred from the content, not invented. If no clear title can be inferred, write "Transcript".]
 
-Final quality check:
-Before giving the final output, verify that:
-- The reconstructed text follows the same order as the subtitle file.
-- No new ideas were added.
-- Unclear or incomplete parts are marked.
-- The transcript is readable but still faithful to the source.\
+[Reconstructed transcript divided into sections with short headings]
+
+---
+## Transcription notes
+[List any: unclear passages marked with [?], suspected missing audio, language switches observed, transcription artifacts removed. Write "None" if the transcript is clean.]\
 """
 
 

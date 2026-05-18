@@ -176,6 +176,52 @@ header p  { color: var(--text-muted); margin-top: 6px; }
   font-size: 0.875rem;
 }
 
+/* ── Loop warning (structured) ────────────────────────────────────────── */
+.loop-warn-title {
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+.loop-warn-table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 10px;
+  font-size: 0.82rem;
+}
+.loop-warn-table td {
+  padding: 3px 8px 3px 0;
+  vertical-align: top;
+}
+.loop-warn-table td:first-child {
+  color: #d97706;
+  white-space: nowrap;
+  padding-right: 16px;
+  font-weight: 600;
+}
+.loop-warn-hint {
+  font-size: 0.8rem;
+  opacity: 0.85;
+  line-height: 1.5;
+}
+
+/* ── Raw SRT download ─────────────────────────────────────────────────── */
+.btn-download-raw {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.18s, color 0.18s;
+}
+.btn-download-raw:hover { border-color: var(--text-muted); color: var(--text); }
+
 /* ── Submit button ────────────────────────────────────────────────────── */
 .btn-submit {
   width: 100%;

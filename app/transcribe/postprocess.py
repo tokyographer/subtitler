@@ -1,37 +1,95 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 
 from app.transcribe.base import Segment
+
+
+@dataclass
+class LoopInfo:
+    """Details about a detected hallucination/repetition loop."""
+    repeated_text: str
+    loop_start_index: int
+    loop_start_time: float    # seconds
+    segment_count: int        # segments from the loop start to end of list
+    focus_language: str | None = None  # None = auto-detect was selected
+
+    def to_dict(self) -> dict:
+        return {
+            "repeated_text": self.repeated_text,
+            "loop_start_index": self.loop_start_index,
+            "loop_start_time": self.loop_start_time,
+            "segment_count": self.segment_count,
+            "focus_language": self.focus_language,
+        }
+
+
+def detect_loop(
+    segments: list[Segment],
+    max_run: int = 20,
+    min_fraction: float = 0.10,
+    focus_language: str | None = None,
+) -> tuple[list[Segment], list[Segment], LoopInfo | None]:
+    """
+    Detect a Whisper hallucination/repetition loop.
+
+    Returns (clean_segments, loop_segments, loop_info).
+
+    - clean_segments: content before the loop (may be empty)
+    - loop_segments: the loop and everything after it — preserved, never discarded
+    - loop_info: None if no loop was detected
+
+    A run is only treated as a hallucination loop when BOTH conditions hold:
+      1. run_length >= max_run  (default 20) — rules out conversational
+         repetition ("Right.", "Yes.", "Okay." said 5–15 times in a row).
+      2. loop_segment_count >= min_fraction * total_segments  (default 10%) —
+         rules out a short run in a long file where the rest is real content.
+
+    Real Whisper hallucinations typically produce hundreds of identical segments
+    that represent the majority of the file. A run of 11 "Right." in a 1 000-
+    segment file (< 2%) is almost certainly real speech, not a hallucination.
+
+    focus_language is stored in loop_info so the UI can give accurate advice:
+    if it is not None, a language was already selected and the advice should
+    NOT tell the user to "select a language".
+    """
+    total = len(segments)
+    if total < max_run:
+        return segments, [], None
+
+    i = 0
+    while i < total:
+        text = segments[i].text.strip().lower()
+        j = i + 1
+        while j < total and segments[j].text.strip().lower() == text:
+            j += 1
+        run_len = j - i
+        if run_len >= max_run:
+            loop_segs = segments[i:]
+            fraction = len(loop_segs) / total
+            if fraction >= min_fraction:
+                info = LoopInfo(
+                    repeated_text=segments[i].text.strip(),
+                    loop_start_index=i,
+                    loop_start_time=segments[i].start,
+                    segment_count=len(loop_segs),
+                    focus_language=focus_language,
+                )
+                return segments[:i], loop_segs, info
+            # Run meets length threshold but not fraction — skip over it
+            # (treat as legitimate repeated speech) and keep scanning.
+        i = j
+
+    return segments, [], None
 
 
 def detect_and_truncate_loop(
     segments: list[Segment], max_run: int = 5
 ) -> tuple[list[Segment], int]:
-    """
-    Scan for the first run of >= max_run consecutive segments whose text is
-    identical (case-insensitive, stripped). Truncates the list at the start of
-    that run and returns (clean_segments, n_dropped).
-
-    A run of fewer than max_run identical segments is considered legitimate
-    repetition (e.g. a repeated phrase for emphasis) and is left untouched.
-    """
-    if len(segments) < max_run:
-        return segments, 0
-
-    i = 0
-    while i < len(segments):
-        text = segments[i].text.strip().lower()
-        j = i + 1
-        while j < len(segments) and segments[j].text.strip().lower() == text:
-            j += 1
-        run_len = j - i
-        if run_len >= max_run:
-            n_dropped = len(segments) - i
-            return segments[:i], n_dropped
-        i = j
-
-    return segments, 0
+    """Backward-compatible wrapper around detect_loop. Returns (clean, n_dropped)."""
+    clean, loop, _ = detect_loop(segments, max_run=max_run)
+    return clean, len(loop)
 
 
 def strip_translation_segments(
@@ -42,10 +100,12 @@ def strip_translation_segments(
     """
     Remove interpreter/translation segments from a multilingual transcription.
 
-    Typical scenario: a main speaker (English or Spanish) followed by a live
-    interpreter repeating the same content in a local language. This function
-    detects the language of each segment and discards those that do not match
-    the primary language.
+    This is an EXPLICIT optional filter — it must never be called automatically
+    because focus_language is a Whisper decoding hint, not a content filter.
+
+    Typical use case: a main speaker followed by a live interpreter repeating
+    the same content in a different language. This function detects the language
+    of each segment and discards those not matching the primary language.
 
     Parameters
     ----------
@@ -66,14 +126,13 @@ def strip_translation_segments(
     """
     try:
         from langdetect import DetectorFactory, LangDetectException, detect
-        DetectorFactory.seed = 42  # reproducible results
+        DetectorFactory.seed = 42
     except ImportError:
         return segments, 0
 
     if not segments:
         return segments, 0
 
-    # ── Detect per-segment language ───────────────────────────────────────
     detected: list[str | None] = []
     for seg in segments:
         text = seg.text.strip()
@@ -81,11 +140,11 @@ def strip_translation_segments(
             detected.append(None)
             continue
         try:
-            detected.append(detect(text).split("-")[0])  # "zh-cn" → "zh"
+            detected.append(detect(text).split("-")[0])
         except LangDetectException:
             detected.append(None)
 
-    # ── Fill gaps: short/undetected segments inherit nearest neighbour ────
+    # Fill gaps: short/undetected segments inherit nearest neighbour
     last: str | None = None
     for i in range(len(detected)):
         if detected[i] is not None:
@@ -99,7 +158,6 @@ def strip_translation_segments(
         elif last is not None:
             detected[i] = last
 
-    # ── Determine primary language ────────────────────────────────────────
     if primary_language is None:
         counts = Counter(d for d in detected if d is not None)
         if not counts:
@@ -108,15 +166,12 @@ def strip_translation_segments(
     else:
         primary_language = primary_language.split("-")[0]
 
-    # Single language present — nothing to filter
     unique_langs = {d for d in detected if d is not None}
     if len(unique_langs) <= 1:
         return segments, 0
 
-    # ── Filter to primary language ────────────────────────────────────────
     kept = [
         seg for seg, lang in zip(segments, detected)
         if lang is None or lang == primary_language
     ]
-    n_dropped = len(segments) - len(kept)
-    return kept, n_dropped
+    return kept, len(segments) - len(kept)

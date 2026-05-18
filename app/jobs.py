@@ -15,11 +15,15 @@ class Job:
     progress: int = 0
     logs: list = field(default_factory=list)
     error: Optional[str] = None
-    srt_path: Optional[str] = None
+    # SRT paths — raw is always written; safe is written only when a loop is detected
+    srt_path: Optional[str] = None          # "best" SRT served for download
+    raw_srt_path: Optional[str] = None      # always present after completion
+    safe_srt_path: Optional[str] = None     # present only when loop was detected
     transcript_path: Optional[str] = None
     transcript_status: Optional[str] = None  # None | "generating" | "ready" | "failed"
     hallucination_warning: bool = False
     segments_dropped: int = 0
+    loop_info: Optional[dict] = None        # structured info for the UI warning
     created_at: float = field(default_factory=time.time)
     completed_at: Optional[float] = None
 
@@ -34,9 +38,12 @@ class Job:
             "progress": self.progress,
             "error": self.error,
             "srt_ready": self.srt_path is not None,
+            "raw_srt_ready": self.raw_srt_path is not None,
+            "safe_srt_ready": self.safe_srt_path is not None,
             "transcript_status": self.transcript_status,
             "hallucination_warning": self.hallucination_warning,
             "segments_dropped": self.segments_dropped,
+            "loop_info": self.loop_info,
             "created_at": self.created_at,
             "completed_at": self.completed_at,
         }

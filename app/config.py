@@ -53,7 +53,8 @@ class Settings(BaseSettings):
     default_merge_gap_ms: int = 0              # 0 = disabled
     default_compression_ratio_threshold: float = 2.4
     default_logprob_threshold: float = -1.0
-    repetition_loop_max_run: int = 5           # consecutive identical segments before truncation
+    repetition_loop_max_run: int = 20          # consecutive identical segments required (real loops are hundreds)
+    repetition_loop_min_fraction: float = 0.10  # loop segments must be >= this fraction of total
 
     # ── whisper.cpp ───────────────────────────────────────────────────────
     # Path to the whisper-cli binary. None = auto-detect from PATH and common locations.
