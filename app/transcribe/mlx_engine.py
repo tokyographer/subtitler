@@ -46,6 +46,19 @@ class MLXWhisperEngine(TranscriptionEngine):
             os.environ.setdefault("HF_HOME", cache)
             os.environ.setdefault("HUGGINGFACE_HUB_CACHE", cache)
 
+    def is_model_cached(self, model: str) -> bool:
+        """Return True if the model weights are already in the local HF cache."""
+        repo = settings.mlx_model_repos.get(model)
+        if not repo:
+            return False
+        hf_home = os.environ.get(
+            "HF_HOME",
+            str(settings.hf_cache_dir) if settings.hf_cache_dir
+            else os.path.expanduser("~/.cache/huggingface"),
+        )
+        model_dir = Path(hf_home) / "hub" / f"models--{repo.replace('/', '--')}"
+        return model_dir.exists()
+
     def transcribe(
         self,
         audio: Union[Path, "np.ndarray"],

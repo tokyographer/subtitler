@@ -99,16 +99,18 @@ async def _process_job(job_id: str, video_path: Path, opts: TranscriptionOptions
             f"Starting — engine={job.engine}, model={job.model}, "
             f"language={lang_label}, task={task_label}"
         )
-        if job.model in ("large-v3-turbo", "large-v3", "medium"):
-            job_store.log(
-                job_id,
-                "First run: downloading model from HuggingFace (~1–3 GB). "
-                "Subsequent runs use the local cache."
-            )
-
         engine = _ENGINES.get(job.engine)
         if engine is None:
             raise ValueError(f"Unknown engine '{job.engine}'.")
+
+        if hasattr(engine, "is_model_cached") and not engine.is_model_cached(job.model):
+            job_store.log(
+                job_id,
+                f"Model '{job.model}' not in local cache — downloading from HuggingFace "
+                f"(~1–3 GB). This only happens once; subsequent runs load from disk instantly."
+            )
+        else:
+            job_store.log(job_id, f"Model '{job.model}' loaded from local cache.")
 
         def _progress_cb(pct: int) -> None:
             mapped = 20 + int(pct * 0.65)
