@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     default_engine: str = "mlx"
     default_task: str = "transcribe"          # "transcribe" | "translate"
     default_temperature: float = 0.0          # 0 = greedy (fastest, deterministic)
-    default_condition_on_previous: bool = True
+    default_condition_on_previous: bool = False  # True enables hallucination cascades
     default_no_speech_threshold: float = 0.6
     default_max_line_chars: int = 42
     default_max_segment_duration: float = 0.0  # 0 = no cap
