@@ -6,29 +6,12 @@ export async function fetchConfig() {
   return res.json();
 }
 
-/**
- * @param {File} file
- * @param {{
- *   language: string,
- *   model: string,
- *   engine: string,
- *   task: string,
- *   max_line_chars: number,
- *   max_segment_duration: number,
- *   merge_gap_ms: number,
- * }} options
- */
 export async function uploadVideo(file, options) {
   const body = new FormData();
   body.append("file", file);
   body.append("language", options.language);
   body.append("model", options.model);
   body.append("engine", options.engine);
-  body.append("task", options.task ?? "transcribe");
-  body.append("max_line_chars", String(options.max_line_chars ?? 42));
-  body.append("max_segment_duration", String(options.max_segment_duration ?? 0));
-  body.append("merge_gap_ms", String(options.merge_gap_ms ?? 0));
-  body.append("filter_translation_track", String(options.filter_translation_track ?? false));
 
   const res = await fetch(`${BASE}/jobs/upload`, { method: "POST", body });
   const data = await res.json();

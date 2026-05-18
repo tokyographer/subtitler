@@ -79,12 +79,22 @@ class MLXWhisperEngine(TranscriptionEngine):
             # Accept either a file path or a pre-decoded numpy array.
             audio_input = audio if not isinstance(audio, Path) else str(audio)
 
+            # Scalar 0.0 disables Whisper's temperature fallback recovery — bad
+            # segments would never be retried and hallucination loops cascade.
+            # Tuple form enables retry at 0.2, 0.4 … when compression ratio or
+            # logprob thresholds are exceeded.
+            temperature = (
+                (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
+                if options.temperature == 0.0
+                else options.temperature
+            )
+
             result = mlx_whisper.transcribe(
                 audio_input,
                 path_or_hf_repo=repo,
                 language=lang,
                 task=options.task,
-                temperature=options.temperature,
+                temperature=temperature,
                 condition_on_previous_text=options.condition_on_previous_text,
                 no_speech_threshold=options.no_speech_threshold,
                 compression_ratio_threshold=options.compression_ratio_threshold,

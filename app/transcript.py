@@ -8,20 +8,27 @@ _SYSTEM_PROMPT = """\
 Take the attached SRT subtitle file and reconstruct it into a coherent, readable transcript.
 
 Important instructions:
-- Reconstruct a continuous readable text using only the file content.
+- Reconstruct a continuous readable text using only the file content in the focus language and ignore other languages.
 - Use only the content contained in the SRT file.
 - Do not add external sources, explanations, interpretations, or new concepts.
 - Preserve the original sequence of ideas.
-- Preserve the main speaker's meaning, tone, language and teaching style as much as possible.
-- Keep the original language of each fragment. If the file contains mixed languages, preserve them rather than translating.
+- Preserve the main speaker's meaning, tone, and teaching style as much as possible.
 - Correct formatting problems caused by subtitle segmentation.
 - Summarize content when it is clearly corrupted or repetitive.
 - If a phrase is unclear, preserve it as closely as possible rather than inventing a correction.
+- Generate the transcript in English ina format that is easy to read and understand, with clear sections and headings if necessary.
 
 Output format:
 1. Title based on the content of the transcript.
 2. Clean reconstructed transcript divided into readable sections.
-3. A short note at the end listing any transcription problems, repetitions, missing context, or unclear passages.\
+3. A short note at the end listing any transcription problems, repetitions, missing context, or unclear passages.
+
+Final quality check:
+Before giving the final output, verify that:
+- The reconstructed text follows the same order as the subtitle file.
+- No new ideas were added.
+- Unclear or incomplete parts are marked.
+- The transcript is readable but still faithful to the source.\
 """
 
 

@@ -58,11 +58,7 @@ export default function App() {
   const [language, setLanguage] = useState("auto");
   const [model, setModel] = useState("large-v3-turbo");
   const [engine, setEngine] = useState("mlx");
-  const [task, setTask] = useState("transcribe");
-  const [maxLineChars, setMaxLineChars] = useState(42);
-  const [maxSegmentDuration, setMaxSegmentDuration] = useState(0);
-  const [mergeGapMs, setMergeGapMs] = useState(0);
-  const [filterTranslation, setFilterTranslation] = useState(false);
+  const [autoTranscript, setAutoTranscript] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Job state
@@ -90,11 +86,8 @@ export default function App() {
         setModel(cfg.defaults.model);
         setLanguage(cfg.defaults.language);
         setEngine(cfg.defaults.engine);
-        setTask(cfg.defaults.task ?? "transcribe");
-        setMaxLineChars(cfg.defaults.max_line_chars ?? 42);
-        setMaxSegmentDuration(cfg.defaults.max_segment_duration ?? 0);
-        setMergeGapMs(cfg.defaults.merge_gap_ms ?? 0);
         if (cfg.system?.ffmpeg_warning) setFfmpegWarning(cfg.system.ffmpeg_warning);
+
       })
       .catch(() =>
         setError("Could not reach the backend. Is the server running on port 8001?")
@@ -138,6 +131,12 @@ export default function App() {
     return () => clearInterval(interval);
   }, [transcriptStatus, jobId]);
 
+  useEffect(() => {
+    if (jobStatus === "completed" && autoTranscript && transcriptStatus === null) {
+      handleGenerateTranscript();
+    }
+  }, [jobStatus]);
+
   const handleGenerateTranscript = async () => {
     setTranscriptStatus("generating");
     setTranscriptError(null);
@@ -166,16 +165,7 @@ export default function App() {
     setProgress(0);
     setUploading(true);
     try {
-      const { job_id } = await uploadVideo(file, {
-        language,
-        model,
-        engine,
-        task,
-        max_line_chars: maxLineChars,
-        max_segment_duration: maxSegmentDuration,
-        merge_gap_ms: mergeGapMs,
-        filter_translation_track: filterTranslation,
-      });
+      const { job_id } = await uploadVideo(file, { language, model, engine });
       setJobId(job_id);
       setJobStatus("uploaded");
     } catch (err) {
@@ -195,6 +185,8 @@ export default function App() {
     setTranscriptStatus(null);
     setTranscriptError(null);
     setHallucinationWarning(null);
+    setAutoTranscript(false);
+
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -257,7 +249,10 @@ export default function App() {
             {/* Basic options */}
             {config && (
               <div className="form-row" style={{ marginTop: 20 }}>
-                <FieldGroup label="Language">
+                <FieldGroup
+                  label="Focus language"
+                  hint="Auto-detect for multilingual audio. Pick a language to speed up transcription and filter the interpreter track."
+                >
                   <select value={language} onChange={(e) => setLanguage(e.target.value)}>
                     {Object.entries(config.languages).map(([code, label]) => (
                       <option key={code} value={code}>{label}</option>
@@ -301,85 +296,23 @@ export default function App() {
 
             {showAdvanced && (
               <div className="advanced-panel">
-                {/* Translation filter */}
-                <FieldGroup
-                  label="Multiple languages"
-                  hint={
-                    filterTranslation
-                      ? language === "auto"
-                        ? "Auto-detect: keeps the most frequent language and removes all others."
-                        : `Keeps ${language.toUpperCase()} segments only — interpreter/translation segments will be removed.`
-                      : "Enable to focus on the main speaker when a live interpreter is present."
-                  }
-                >
-                  <label className="field-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={filterTranslation}
-                      onChange={(e) => setFilterTranslation(e.target.checked)}
-                    />
-                    Focus on main speaker (remove interpreter track)
-                  </label>
-                </FieldGroup>
 
-                {/* Translate row */}
-                <div className="form-row-2">
-                  <FieldGroup
-                    label="Task"
-                    hint={task === "translate" ? "Output will be in English regardless of source language." : "Output matches source language."}
-                  >
-                    <select value={task} onChange={(e) => setTask(e.target.value)}>
-                      <option value="transcribe">Transcribe (keep original language)</option>
-                      <option value="translate">Translate to English</option>
-                    </select>
-                  </FieldGroup>
-                </div>
+                {/* Generate transcript */}
+                <label className="field-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={autoTranscript}
+                    onChange={(e) => setAutoTranscript(e.target.checked)}
+                  />
+                  <span>
+                    <strong>Generate transcript after SRT</strong>
+                    <span className="field-hint" style={{ display: "block", marginTop: 2 }}>
+                      Uses Claude to reconstruct a clean, readable transcript from the subtitles.
+                      Requires <code>SUBTITLER_ANTHROPIC_API_KEY</code> in .env.
+                    </span>
+                  </span>
+                </label>
 
-                <div className="form-row adv-row">
-                  <FieldGroup
-                    label="Max line length (chars)"
-                    hint="Characters per subtitle line before wrapping."
-                  >
-                    <input
-                      type="number"
-                      min={10}
-                      max={84}
-                      value={maxLineChars}
-                      onChange={(e) => setMaxLineChars(Number(e.target.value))}
-                      className="num-input"
-                    />
-                  </FieldGroup>
-
-                  <FieldGroup
-                    label="Max display duration (s)"
-                    hint="Cap each subtitle block. 0 = no limit."
-                  >
-                    <input
-                      type="number"
-                      min={0}
-                      max={30}
-                      step={0.5}
-                      value={maxSegmentDuration}
-                      onChange={(e) => setMaxSegmentDuration(Number(e.target.value))}
-                      className="num-input"
-                    />
-                  </FieldGroup>
-
-                  <FieldGroup
-                    label="Merge gap (ms)"
-                    hint="Merge consecutive segments closer than this. 0 = off."
-                  >
-                    <input
-                      type="number"
-                      min={0}
-                      max={2000}
-                      step={50}
-                      value={mergeGapMs}
-                      onChange={(e) => setMergeGapMs(Number(e.target.value))}
-                      className="num-input"
-                    />
-                  </FieldGroup>
-                </div>
               </div>
             )}
 
@@ -427,11 +360,11 @@ export default function App() {
           {hallucinationWarning && (
             <div className="card">
               <div className="warn-box">
-                <strong>⚠ Repetition loop detected and removed.</strong> Whisper got stuck
-                repeating the same phrase — {hallucinationWarning.segmentsDropped} segments
-                were truncated. The SRT contains only the content before the loop started.
-                For a clean re-transcription, try a smaller model (e.g. <em>medium</em> or{" "}
-                <em>small</em>) or toggle the language to a specific code instead of Auto-detect.
+                <strong>⚠ Repetition loop detected — {hallucinationWarning.segmentsDropped} segments removed.</strong>
+                {" "}The SRT contains only the content before the loop started. To fix this,
+                re-transcribe with the <strong>Focus language</strong> set to a specific language
+                (e.g. English or Spanish) instead of Auto-detect. If the loop persists, try a
+                smaller model such as <em>medium</em> or <em>small</em>.
               </div>
             </div>
           )}
