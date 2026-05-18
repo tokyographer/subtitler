@@ -39,6 +39,6 @@ frontend/.vite/
 htmlcov/
 
 .claude/
-
+Claude.md
 # MLX model cache (optional — can be large)
 # ~/.cache/huggingface/
