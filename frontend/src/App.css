@@ -303,3 +303,62 @@ header p  { color: var(--text-muted); margin-top: 6px; }
   transition: border-color 0.18s, color 0.18s;
 }
 .btn-new:hover { border-color: var(--text-muted); color: var(--text); }
+
+/* ── Checkbox field ──────────────────────────────────────────────────── */
+.field-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--text);
+  padding: 6px 0;
+}
+.field-checkbox input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* ── Transcript button ────────────────────────────────────────────────── */
+.transcript-section { margin-top: 12px; }
+
+.btn-transcript {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px;
+  background: transparent;
+  color: var(--accent-h);
+  border: 1.5px solid var(--accent);
+  border-radius: var(--radius);
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s;
+}
+.btn-transcript:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--text);
+}
+.btn-transcript:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-transcript--ready { background: rgba(99, 102, 241, 0.08); }
+.btn-transcript--ready:hover { background: rgba(99, 102, 241, 0.18); }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}

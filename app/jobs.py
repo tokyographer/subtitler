@@ -16,6 +16,10 @@ class Job:
     logs: list = field(default_factory=list)
     error: Optional[str] = None
     srt_path: Optional[str] = None
+    transcript_path: Optional[str] = None
+    transcript_status: Optional[str] = None  # None | "generating" | "ready" | "failed"
+    hallucination_warning: bool = False
+    segments_dropped: int = 0
     created_at: float = field(default_factory=time.time)
     completed_at: Optional[float] = None
 
@@ -30,6 +34,9 @@ class Job:
             "progress": self.progress,
             "error": self.error,
             "srt_ready": self.srt_path is not None,
+            "transcript_status": self.transcript_status,
+            "hallucination_warning": self.hallucination_warning,
+            "segments_dropped": self.segments_dropped,
             "created_at": self.created_at,
             "completed_at": self.completed_at,
         }

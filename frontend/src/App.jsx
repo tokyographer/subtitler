@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   downloadSrtUrl,
+  downloadTranscriptUrl,
   fetchConfig,
+  fetchJob,
+  generateTranscript,
   subscribeLogs,
   uploadVideo,
 } from "./api";
@@ -59,6 +62,7 @@ export default function App() {
   const [maxLineChars, setMaxLineChars] = useState(42);
   const [maxSegmentDuration, setMaxSegmentDuration] = useState(0);
   const [mergeGapMs, setMergeGapMs] = useState(0);
+  const [filterTranslation, setFilterTranslation] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Job state
@@ -68,6 +72,13 @@ export default function App() {
   const [logs, setLogs] = useState([]);
   const [error, setError] = useState(null);
   const [uploading, setUploading] = useState(false);
+
+  // Transcript state
+  const [transcriptStatus, setTranscriptStatus] = useState(null);
+  const [transcriptError, setTranscriptError] = useState(null);
+
+  // Hallucination warning
+  const [hallucinationWarning, setHallucinationWarning] = useState(null);
 
   const logBoxRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -100,11 +111,43 @@ export default function App() {
     const es = subscribeLogs(jobId, {
       onLog: (msg) => setLogs((prev) => [...prev, { text: msg, type: "log" }]),
       onStatus: (status, pct) => { setJobStatus(status); setProgress(pct); },
-      onDone: (status) => setJobStatus(status),
+      onDone: (status, meta) => {
+        setJobStatus(status);
+        if (meta?.hallucinationWarning) setHallucinationWarning(meta);
+      },
       onError: (msg) => setLogs((prev) => [...prev, { text: msg, type: "error" }]),
     });
     return () => es.close();
   }, [jobId]);
+
+  useEffect(() => {
+    if (transcriptStatus !== "generating" || !jobId) return;
+    const interval = setInterval(async () => {
+      try {
+        const job = await fetchJob(jobId);
+        if (job.transcript_status === "ready") {
+          setTranscriptStatus("ready");
+        } else if (job.transcript_status === "failed") {
+          setTranscriptStatus("failed");
+          setTranscriptError("Transcript generation failed. Check that SUBTITLER_ANTHROPIC_API_KEY is set.");
+        }
+      } catch {
+        // keep polling
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [transcriptStatus, jobId]);
+
+  const handleGenerateTranscript = async () => {
+    setTranscriptStatus("generating");
+    setTranscriptError(null);
+    try {
+      await generateTranscript(jobId);
+    } catch (err) {
+      setTranscriptStatus("failed");
+      setTranscriptError(err.message);
+    }
+  };
 
   const onDrop = useCallback((e) => {
     e.preventDefault();
@@ -131,6 +174,7 @@ export default function App() {
         max_line_chars: maxLineChars,
         max_segment_duration: maxSegmentDuration,
         merge_gap_ms: mergeGapMs,
+        filter_translation_track: filterTranslation,
       });
       setJobId(job_id);
       setJobStatus("uploaded");
@@ -148,6 +192,9 @@ export default function App() {
     setProgress(0);
     setLogs([]);
     setError(null);
+    setTranscriptStatus(null);
+    setTranscriptError(null);
+    setHallucinationWarning(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -254,6 +301,27 @@ export default function App() {
 
             {showAdvanced && (
               <div className="advanced-panel">
+                {/* Translation filter */}
+                <FieldGroup
+                  label="Multiple languages"
+                  hint={
+                    filterTranslation
+                      ? language === "auto"
+                        ? "Auto-detect: keeps the most frequent language and removes all others."
+                        : `Keeps ${language.toUpperCase()} segments only — interpreter/translation segments will be removed.`
+                      : "Enable to focus on the main speaker when a live interpreter is present."
+                  }
+                >
+                  <label className="field-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={filterTranslation}
+                      onChange={(e) => setFilterTranslation(e.target.checked)}
+                    />
+                    Focus on main speaker (remove interpreter track)
+                  </label>
+                </FieldGroup>
+
                 {/* Translate row */}
                 <div className="form-row-2">
                   <FieldGroup
@@ -356,11 +424,48 @@ export default function App() {
             </div>
           </div>
 
+          {hallucinationWarning && (
+            <div className="card">
+              <div className="warn-box">
+                <strong>⚠ Repetition loop detected and removed.</strong> Whisper got stuck
+                repeating the same phrase — {hallucinationWarning.segmentsDropped} segments
+                were truncated. The SRT contains only the content before the loop started.
+                For a clean re-transcription, try a smaller model (e.g. <em>medium</em> or{" "}
+                <em>small</em>) or toggle the language to a specific code instead of Auto-detect.
+              </div>
+            </div>
+          )}
+
           {jobStatus === "completed" && (
             <div className="card" style={{ textAlign: "center" }}>
               <a className="btn-download" href={downloadSrtUrl(jobId)} download>
                 ⬇ Download .srt file
               </a>
+              <div className="transcript-section">
+                {transcriptStatus === null && (
+                  <button className="btn-transcript" onClick={handleGenerateTranscript}>
+                    Generate Transcript
+                  </button>
+                )}
+                {transcriptStatus === "generating" && (
+                  <button className="btn-transcript btn-transcript--loading" disabled>
+                    <span className="spinner" /> Generating transcript…
+                  </button>
+                )}
+                {transcriptStatus === "ready" && (
+                  <a className="btn-transcript btn-transcript--ready" href={downloadTranscriptUrl(jobId)} download>
+                    ⬇ Download Transcript (.md)
+                  </a>
+                )}
+                {transcriptStatus === "failed" && (
+                  <>
+                    <div className="error-box">{transcriptError || "Transcript generation failed."}</div>
+                    <button className="btn-transcript" onClick={handleGenerateTranscript} style={{ marginTop: 8 }}>
+                      Retry
+                    </button>
+                  </>
+                )}
+              </div>
               <button className="btn-new" onClick={reset}>Transcribe another file</button>
             </div>
           )}

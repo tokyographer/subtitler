@@ -133,6 +133,8 @@ class WhisperCppEngine(TranscriptionEngine):
                 "--language",    lang_arg,
                 "--task",        options.task,
                 "--threads",     str(threads),
+                "--entropy-thold", f"{options.compression_ratio_threshold:.2f}",
+                "--logprob-thold", f"{options.logprob_threshold:.2f}",
             ]
 
             if settings.whisper_cpp_use_coreml:

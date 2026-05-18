@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     default_max_line_chars: int = 42
     default_max_segment_duration: float = 0.0  # 0 = no cap
     default_merge_gap_ms: int = 0              # 0 = disabled
+    default_compression_ratio_threshold: float = 2.4
+    default_logprob_threshold: float = -1.0
+    repetition_loop_max_run: int = 5           # consecutive identical segments before truncation
 
     # ── whisper.cpp ───────────────────────────────────────────────────────
     # Path to the whisper-cli binary. None = auto-detect from PATH and common locations.
@@ -62,6 +65,10 @@ class Settings(BaseSettings):
     # Enable Core ML inference (requires a Core ML-enabled whisper.cpp build
     # and pre-converted *.mlmodelc model files alongside the .bin file).
     whisper_cpp_use_coreml: bool = False
+
+    # ── Transcript generation ─────────────────────────────────────────────
+    anthropic_api_key: Optional[str] = None
+    transcript_model: str = "claude-sonnet-4-6"
 
     # ── MLX model repos ───────────────────────────────────────────────────
     mlx_model_repos: dict = {

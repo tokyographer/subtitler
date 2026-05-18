@@ -28,6 +28,7 @@ export async function uploadVideo(file, options) {
   body.append("max_line_chars", String(options.max_line_chars ?? 42));
   body.append("max_segment_duration", String(options.max_segment_duration ?? 0));
   body.append("merge_gap_ms", String(options.merge_gap_ms ?? 0));
+  body.append("filter_translation_track", String(options.filter_translation_track ?? false));
 
   const res = await fetch(`${BASE}/jobs/upload`, { method: "POST", body });
   const data = await res.json();
@@ -53,7 +54,13 @@ export function subscribeLogs(jobId, { onLog, onStatus, onDone, onError }) {
       const data = JSON.parse(event.data);
       if (data.type === "log") onLog?.(data.message);
       else if (data.type === "status") onStatus?.(data.status, data.progress);
-      else if (data.type === "done") { onDone?.(data.status); es.close(); }
+      else if (data.type === "done") {
+        onDone?.(data.status, {
+          hallucinationWarning: data.hallucination_warning,
+          segmentsDropped: data.segments_dropped,
+        });
+        es.close();
+      }
       else if (data.type === "error") { onError?.(data.message); es.close(); }
     } catch {
       // ignore parse errors
@@ -66,4 +73,15 @@ export function subscribeLogs(jobId, { onLog, onStatus, onDone, onError }) {
 
 export function downloadSrtUrl(jobId) {
   return `${BASE}/jobs/${jobId}/download-srt`;
+}
+
+export async function generateTranscript(jobId) {
+  const res = await fetch(`${BASE}/jobs/${jobId}/transcript`, { method: "POST" });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || "Failed to start transcript generation");
+  return data;
+}
+
+export function downloadTranscriptUrl(jobId) {
+  return `${BASE}/jobs/${jobId}/download-transcript`;
 }

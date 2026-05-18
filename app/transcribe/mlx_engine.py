@@ -87,6 +87,9 @@ class MLXWhisperEngine(TranscriptionEngine):
                 temperature=options.temperature,
                 condition_on_previous_text=options.condition_on_previous_text,
                 no_speech_threshold=options.no_speech_threshold,
+                compression_ratio_threshold=options.compression_ratio_threshold,
+                logprob_threshold=options.logprob_threshold,
+                hallucination_silence_threshold=options.hallucination_silence_threshold,
                 verbose=False,
             )
         except Exception as exc:

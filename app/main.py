@@ -16,8 +16,10 @@ from app.audio import AudioExtractionError, extract_audio
 from app.config import settings
 from app.jobs import Job, job_store
 from app.subtitles.srt import segments_to_srt
+from app.transcript import reconstruct_transcript
 from app.transcribe.base import TranscriptionOptions
 from app.transcribe.mlx_engine import MLXWhisperEngine
+from app.transcribe.postprocess import detect_and_truncate_loop, strip_translation_segments
 from app.transcribe.whisper_cpp_engine import WhisperCppEngine
 from app.utils.files import cleanup_upload, save_upload, validate_upload
 
@@ -123,7 +125,39 @@ async def _process_job(job_id: str, video_path: Path, opts: TranscriptionOptions
 
         job_store.log(job_id, f"Transcription complete — {len(segments)} segments.")
 
-        # ── Step 3: Generate SRT ──────────────────────────────────────────
+        # ── Step 3: Repetition-loop detection ────────────────────────────
+        segments, n_dropped = detect_and_truncate_loop(
+            segments, max_run=settings.repetition_loop_max_run
+        )
+        if n_dropped > 0:
+            job_store.update(
+                job_id,
+                hallucination_warning=True,
+                segments_dropped=n_dropped,
+            )
+            job_store.log(
+                job_id,
+                f"⚠ Hallucination loop detected — {n_dropped} repeated segments removed. "
+                f"{len(segments)} segments remain.",
+            )
+            if not segments:
+                _fail(job_id, "All segments were a repetition loop. The transcription was entirely a hallucination. Try a different model or language setting.")
+                return
+
+        # ── Step 4: Translation track filter ─────────────────────────────
+        if opts.filter_translation_track:
+            primary_lang = None if job.language == "auto" else job.language
+            segments, n_filtered = strip_translation_segments(segments, primary_language=primary_lang)
+            if n_filtered > 0:
+                job_store.log(
+                    job_id,
+                    f"Translation filter: {n_filtered} interpreter segments removed "
+                    f"({len(segments)} primary-language segments remain).",
+                )
+            else:
+                job_store.log(job_id, "Translation filter: no secondary-language segments detected.")
+
+        # ── Step 5: Generate SRT ──────────────────────────────────────────
         job_store.update(job_id, status="generating_srt", progress=90)
         job_store.log(
             job_id,
@@ -187,6 +221,7 @@ async def upload_video(
     max_line_chars: int = Form(default=42),
     max_segment_duration: float = Form(default=0.0),
     merge_gap_ms: int = Form(default=0),
+    filter_translation_track: bool = Form(default=False),
 ):
     await validate_upload(file)
 
@@ -217,6 +252,9 @@ async def upload_video(
         temperature=settings.default_temperature,
         condition_on_previous_text=settings.default_condition_on_previous,
         no_speech_threshold=settings.default_no_speech_threshold,
+        compression_ratio_threshold=settings.default_compression_ratio_threshold,
+        logprob_threshold=settings.default_logprob_threshold,
+        filter_translation_track=filter_translation_track,
         max_line_chars=max_line_chars,
         max_segment_duration=max_segment_duration,
         merge_gap_ms=merge_gap_ms,
@@ -269,7 +307,7 @@ async def job_logs(job_id: str):
             yield f"data: {json.dumps({'type': 'status', 'status': job.status, 'progress': job.progress})}\n\n"
 
             if job.status in ("completed", "failed"):
-                yield f"data: {json.dumps({'type': 'done', 'status': job.status})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'status': job.status, 'hallucination_warning': job.hallucination_warning, 'segments_dropped': job.segments_dropped})}\n\n"
                 return
 
             await asyncio.sleep(0.1)  # 100 ms poll — logs feel instantaneous
@@ -282,6 +320,52 @@ async def job_logs(job_id: str):
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@app.post("/api/jobs/{job_id}/transcript")
+async def start_transcript(job_id: str, background_tasks: BackgroundTasks):
+    job = job_store.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+    if job.status != "completed" or not job.srt_path:
+        raise HTTPException(400, "SRT must be completed before generating a transcript.")
+    if job.transcript_status == "generating":
+        raise HTTPException(409, "Transcript generation already in progress.")
+    job_store.update(job_id, transcript_status="generating")
+    background_tasks.add_task(_generate_transcript, job_id)
+    return {"status": "generating"}
+
+
+async def _generate_transcript(job_id: str) -> None:
+    job = job_store.get(job_id)
+    if not job or not job.srt_path:
+        return
+    try:
+        srt_content = Path(job.srt_path).read_text(encoding="utf-8")
+        transcript = await asyncio.to_thread(reconstruct_transcript, srt_content)
+        transcript_path = Path(job.srt_path).parent / "transcript.md"
+        transcript_path.write_text(transcript, encoding="utf-8")
+        job_store.update(job_id, transcript_status="ready", transcript_path=str(transcript_path))
+    except Exception as exc:  # noqa: BLE001
+        job_store.update(job_id, transcript_status="failed", error=str(exc))
+
+
+@app.get("/api/jobs/{job_id}/download-transcript")
+async def download_transcript(job_id: str):
+    job = job_store.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+    if job.transcript_status != "ready" or not job.transcript_path:
+        raise HTTPException(400, "Transcript is not ready yet.")
+    transcript_path = Path(job.transcript_path)
+    if not transcript_path.exists():
+        raise HTTPException(500, "Transcript file is missing from disk.")
+    safe_stem = Path(job.filename).stem[:80]
+    return FileResponse(
+        path=transcript_path,
+        media_type="text/markdown; charset=utf-8",
+        filename=f"{safe_stem}-transcript.md",
     )
 
 
@@ -325,6 +409,11 @@ async def get_config():
             "max_line_chars": settings.default_max_line_chars,
             "max_segment_duration": settings.default_max_segment_duration,
             "merge_gap_ms": settings.default_merge_gap_ms,
+        },
+        "anti_hallucination": {
+            "compression_ratio_threshold": settings.default_compression_ratio_threshold,
+            "logprob_threshold": settings.default_logprob_threshold,
+            "repetition_loop_max_run": settings.repetition_loop_max_run,
         },
         "system": {
             "ffmpeg_available": ffmpeg_ok,

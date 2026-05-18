@@ -19,6 +19,12 @@ class TranscriptionOptions:
     temperature: float = 0.0               # 0 = greedy / fastest
     condition_on_previous_text: bool = True
     no_speech_threshold: float = 0.6
+    # Anti-hallucination thresholds (passed to the engine; post-processor is an
+    # additional safety net that runs regardless of engine).
+    compression_ratio_threshold: float = 2.4   # zlib ratio above which a segment is retried
+    logprob_threshold: float = -1.0            # avg log-prob below which a segment is retried
+    hallucination_silence_threshold: float | None = None  # silence duration (s) to suppress
+    filter_translation_track: bool = False  # strip interpreter/translation segments
     max_line_chars: int = 42               # SRT line wrap width
     max_segment_duration: float = 0.0      # cap display duration (0 = unlimited)
     merge_gap_ms: int = 0                  # merge segments closer than N ms (0 = off)
