@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Optional
 import json
 import shutil
 import time
@@ -8,6 +9,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -378,8 +380,12 @@ async def job_logs(job_id: str):
     )
 
 
+class TranscriptRequest(BaseModel):
+    provider: Optional[str] = None  # "claude" | "ollama" — overrides SUBTITLER_TRANSCRIPT_PROVIDER
+
+
 @app.post("/api/jobs/{job_id}/transcript")
-async def start_transcript(job_id: str, background_tasks: BackgroundTasks):
+async def start_transcript(job_id: str, background_tasks: BackgroundTasks, body: TranscriptRequest = TranscriptRequest()):
     job = job_store.get(job_id)
     if not job:
         raise HTTPException(404, "Job not found.")
@@ -388,17 +394,17 @@ async def start_transcript(job_id: str, background_tasks: BackgroundTasks):
     if job.transcript_status == "generating":
         raise HTTPException(409, "Transcript generation already in progress.")
     job_store.update(job_id, transcript_status="generating")
-    background_tasks.add_task(_generate_transcript, job_id)
+    background_tasks.add_task(_generate_transcript, job_id, body.provider)
     return {"status": "generating"}
 
 
-async def _generate_transcript(job_id: str) -> None:
+async def _generate_transcript(job_id: str, provider: str | None) -> None:
     job = job_store.get(job_id)
     if not job or not job.srt_path:
         return
     try:
         srt_content = Path(job.srt_path).read_text(encoding="utf-8")
-        transcript = await asyncio.to_thread(reconstruct_transcript, srt_content)
+        transcript = await asyncio.to_thread(reconstruct_transcript, srt_content, provider)
         transcript_path = Path(job.srt_path).parent / "transcript.md"
         transcript_path.write_text(transcript, encoding="utf-8")
         job_store.update(job_id, transcript_status="ready", transcript_path=str(transcript_path))
@@ -420,7 +426,7 @@ async def download_transcript(job_id: str):
     return FileResponse(
         path=transcript_path,
         media_type="text/markdown; charset=utf-8",
-        filename=f"{safe_stem}-transcript.md",
+        filename=f"{safe_stem}-{job.model}-transcript.md",
     )
 
 
@@ -440,7 +446,7 @@ async def download_srt(job_id: str):
     return FileResponse(
         path=srt_path,
         media_type="text/plain; charset=utf-8",
-        filename=f"{safe_stem}.srt",
+        filename=f"{safe_stem}-{job.model}.srt",
     )
 
 
@@ -458,7 +464,7 @@ async def download_raw_srt(job_id: str):
     return FileResponse(
         path=raw_path,
         media_type="text/plain; charset=utf-8",
-        filename=f"{safe_stem}-raw.srt",
+        filename=f"{safe_stem}-{job.model}-raw.srt",
     )
 
 
@@ -487,6 +493,11 @@ async def get_config():
             "compression_ratio_threshold": settings.default_compression_ratio_threshold,
             "logprob_threshold": settings.default_logprob_threshold,
             "repetition_loop_max_run": settings.repetition_loop_max_run,
+        },
+        "transcript": {
+            "provider": settings.transcript_provider,
+            "claude_model": settings.transcript_model,
+            "ollama_model": settings.ollama_model,
         },
         "system": {
             "ffmpeg_available": ffmpeg_ok,

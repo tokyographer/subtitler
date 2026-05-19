@@ -68,8 +68,13 @@ class Settings(BaseSettings):
     whisper_cpp_use_coreml: bool = False
 
     # ── Transcript generation ─────────────────────────────────────────────
+    transcript_provider: str = "claude"           # "claude" | "ollama"
     anthropic_api_key: Optional[str] = None
     transcript_model: str = "claude-sonnet-4-6"
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3.1:8b"
+    ollama_num_ctx: int = 65536   # context window; llama3.1:8b trains to 131072 but 64k fits safely in 32 GB RAM
+    ollama_timeout: int = 600     # seconds; long SRTs need more than the default 5 min
 
     # ── MLX model repos ───────────────────────────────────────────────────
     mlx_model_repos: dict = {

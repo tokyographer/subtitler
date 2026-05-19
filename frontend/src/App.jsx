@@ -70,6 +70,7 @@ export default function App() {
   const [model, setModel] = useState("large-v3-turbo");
   const [engine, setEngine] = useState("mlx");
   const [autoTranscript, setAutoTranscript] = useState(false);
+  const [transcriptProvider, setTranscriptProvider] = useState(null); // null = use server default
   const [filterTranslation, setFilterTranslation] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -98,6 +99,7 @@ export default function App() {
         setModel(cfg.defaults.model);
         setLanguage(cfg.defaults.language);
         setEngine(cfg.defaults.engine);
+        if (cfg.transcript?.provider) setTranscriptProvider(cfg.transcript.provider);
         if (cfg.system?.ffmpeg_warning) setFfmpegWarning(cfg.system.ffmpeg_warning);
 
       })
@@ -134,7 +136,7 @@ export default function App() {
           setTranscriptStatus("ready");
         } else if (job.transcript_status === "failed") {
           setTranscriptStatus("failed");
-          setTranscriptError("Transcript generation failed. Check that SUBTITLER_ANTHROPIC_API_KEY is set.");
+          setTranscriptError(job.error || "Transcript generation failed.");
         }
       } catch {
         // keep polling
@@ -153,7 +155,7 @@ export default function App() {
     setTranscriptStatus("generating");
     setTranscriptError(null);
     try {
-      await generateTranscript(jobId);
+      await generateTranscript(jobId, transcriptProvider);
     } catch (err) {
       setTranscriptStatus("failed");
       setTranscriptError(err.message);
@@ -201,6 +203,7 @@ export default function App() {
     setTranscriptError(null);
     setHallucinationWarning(null);
     setAutoTranscript(false);
+    setTranscriptProvider(config?.transcript?.provider ?? "claude");
     setFilterTranslation(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -321,12 +324,26 @@ export default function App() {
                   />
                   <span>
                     <strong>Generate transcript after SRT</strong>
-                    <span className="field-hint" style={{ display: "block", marginTop: 2 }}>
-                      Uses Claude to reconstruct a clean, readable transcript from the subtitles.
-                      Requires <code>SUBTITLER_ANTHROPIC_API_KEY</code> in .env.
-                    </span>
                   </span>
                 </label>
+                {autoTranscript && config?.transcript && (
+                  <div style={{ marginLeft: 28, marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
+                    <label style={{ fontSize: "0.85rem", color: "var(--text-muted, #888)" }}>Provider</label>
+                    <select
+                      value={transcriptProvider ?? config.transcript.provider}
+                      onChange={(e) => setTranscriptProvider(e.target.value)}
+                      style={{ fontSize: "0.85rem" }}
+                    >
+                      <option value="claude">Claude ({config.transcript.claude_model})</option>
+                      <option value="ollama">Ollama ({config.transcript.ollama_model}) — local, free</option>
+                    </select>
+                    {transcriptProvider === "claude" && (
+                      <span className="field-hint" style={{ marginTop: 0 }}>
+                        Requires <code>SUBTITLER_ANTHROPIC_API_KEY</code>
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 {/* Translation filter */}
                 <label className="field-checkbox">

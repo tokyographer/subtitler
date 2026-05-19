@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import anthropic
+import httpx
 
 from app.config import settings
 
@@ -34,7 +35,14 @@ Output format:
 """
 
 
-def reconstruct_transcript(srt_content: str) -> str:
+def reconstruct_transcript(srt_content: str, provider: str | None = None) -> str:
+    effective = provider or settings.transcript_provider
+    if effective == "ollama":
+        return _reconstruct_with_ollama(srt_content)
+    return _reconstruct_with_claude(srt_content)
+
+
+def _reconstruct_with_claude(srt_content: str) -> str:
     if not settings.anthropic_api_key:
         raise ValueError(
             "SUBTITLER_ANTHROPIC_API_KEY is not set. "
@@ -54,3 +62,20 @@ def reconstruct_transcript(srt_content: str) -> str:
         messages=[{"role": "user", "content": srt_content}],
     )
     return response.content[0].text
+
+
+def _reconstruct_with_ollama(srt_content: str) -> str:
+    url = f"{settings.ollama_base_url}/api/chat"
+    payload = {
+        "model": settings.ollama_model,
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": srt_content},
+        ],
+        "options": {"num_ctx": settings.ollama_num_ctx},
+        "stream": False,
+    }
+    with httpx.Client(timeout=settings.ollama_timeout) as client:
+        response = client.post(url, json=payload)
+        response.raise_for_status()
+    return response.json()["message"]["content"]
