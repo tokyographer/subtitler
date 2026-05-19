@@ -66,11 +66,11 @@ export function downloadRawSrtUrl(jobId) {
   return `${BASE}/jobs/${jobId}/download-raw-srt`;
 }
 
-export async function generateTranscript(jobId, provider) {
+export async function generateTranscript(jobId, provider, ollamaModel) {
   const res = await fetch(`${BASE}/jobs/${jobId}/transcript`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider: provider ?? null }),
+    body: JSON.stringify({ provider: provider ?? null, ollama_model: ollamaModel ?? null }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.detail || "Failed to start transcript generation");

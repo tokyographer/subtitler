@@ -13,7 +13,7 @@ Runs fully on-device on Apple Silicon using `mlx-whisper`. No cloud APIs require
 - Real-time progress and logs via Server-Sent Events (SSE)
 - Multilingual-aware — preserves all languages by default; focus language is a Whisper decoding hint, not a content filter
 - Hallucination/repetition-loop detection with two-factor guard — always preserves the raw SRT, generates a clean `safe_transcript.srt` separately
-- On-demand **transcript reconstruction** via Claude API — merges subtitle fragments into a clean, readable `.md` document
+- On-demand **transcript reconstruction** — merges subtitle fragments into a clean, readable `.md` document via **Claude API** or a local **Ollama** model (free, no API key needed)
 - YouTube-compatible SRT output (42-char line wrap, millisecond timestamps)
 - Separate optional interpreter/translation-track filter for simultaneous-interpretation audio
 - File validation by extension and magic bytes (MIME sniffing)
@@ -119,7 +119,7 @@ uploaded → extracting_audio → transcribing → generating_srt → completed
 | `raw_transcript.srt` | Always | Full Whisper output including any detected loop |
 | `safe_transcript.srt` | Loop detected | Clean segments before the loop started |
 | `postprocess_report.json` | Loop detected | Loop details: start time, repeated text, segment counts |
-| `transcript.md` | On request | Claude-reconstructed readable transcript |
+| `transcript.md` | On request | Reconstructed readable transcript (Claude or Ollama) |
 
 ---
 
@@ -127,14 +127,14 @@ uploaded → extracting_audio → transcribing → generating_srt → completed
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| **Generate transcript after SRT** | Off | Automatically calls Claude API to reconstruct a readable transcript when the SRT completes. Requires `SUBTITLER_ANTHROPIC_API_KEY`. |
+| **Generate transcript after SRT** | Off | Automatically reconstructs a readable transcript when the SRT completes. Choose provider (Claude or Ollama) and, when Ollama is selected, pick the model from a live dropdown of installed models. |
 | **Filter interpreter / translation track** | Off | Removes live interpreter segments when the audio has a main speaker followed by a translator repeating the content in another language. Multilingual content is always preserved by default — this filter is only for simultaneous-interpretation recordings. |
 
 ---
 
 ## Transcript Generation
 
-When enabled, the transcript is reconstructed by Claude from the completed SRT:
+When enabled, the transcript is reconstructed from the completed SRT:
 
 - Strips all timestamps and sequence numbers
 - Merges subtitle fragments into complete sentences and paragraphs
@@ -143,7 +143,37 @@ When enabled, the transcript is reconstructed by Claude from the completed SRT:
 - Marks unclear or unintelligible passages as `[?]` instead of inventing content
 - Notes transcription artifacts, language switches, and suspected missing audio
 
-Requires `SUBTITLER_ANTHROPIC_API_KEY` in `.env`.
+Two providers are available — select per-job in the UI:
+
+### Claude (default)
+
+Uses the Claude API (`claude-sonnet-4-6` by default). Requires `SUBTITLER_ANTHROPIC_API_KEY` in `.env`.
+
+### Ollama (local, free)
+
+Uses a locally running [Ollama](https://ollama.com) server. No API key or internet connection needed. The UI shows a live dropdown of all models you have installed; select any model per job without restarting the server.
+
+**Setup:**
+
+```bash
+# Install Ollama (https://ollama.com)
+brew install ollama
+
+# Pull a model — llama3.1:8b is a good default; use a 32b model for best quality
+ollama pull llama3.1:8b
+
+# Start the Ollama server (runs on http://localhost:11434 by default)
+ollama serve
+```
+
+Enable as default in `.env`:
+
+```
+SUBTITLER_TRANSCRIPT_PROVIDER=ollama
+SUBTITLER_OLLAMA_MODEL=llama3.1:8b
+```
+
+> **Note on large models:** 32b+ models on long SRTs can take 20–30 minutes. The Ollama client uses streaming so it won't time out as long as tokens keep arriving.
 
 ---
 
@@ -170,8 +200,12 @@ All settings use the `SUBTITLER_` prefix and can be set in `.env` or as environm
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SUBTITLER_ANTHROPIC_API_KEY` | — | Required for transcript generation |
+| `SUBTITLER_TRANSCRIPT_PROVIDER` | `claude` | `claude` or `ollama` — default transcript provider |
+| `SUBTITLER_ANTHROPIC_API_KEY` | — | Required when provider is `claude` |
 | `SUBTITLER_TRANSCRIPT_MODEL` | `claude-sonnet-4-6` | Claude model for transcript reconstruction |
+| `SUBTITLER_OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
+| `SUBTITLER_OLLAMA_MODEL` | `llama3.1:8b` | Default Ollama model (overridable per-job in the UI) |
+| `SUBTITLER_OLLAMA_NUM_CTX` | `65536` | Ollama context window (tokens); 64k fits safely in 32 GB RAM |
 | `SUBTITLER_DEFAULT_MODEL` | `large-v3-turbo` | Default Whisper model |
 | `SUBTITLER_DEFAULT_LANGUAGE` | `auto` | Default focus language |
 | `SUBTITLER_DEFAULT_ENGINE` | `mlx` | `mlx` or `whisper_cpp` |
@@ -209,7 +243,7 @@ Models are downloaded automatically from HuggingFace on first use and cached loc
 | `GET` | `/api/jobs/{job_id}/logs` | SSE stream — logs, status, progress |
 | `GET` | `/api/jobs/{job_id}/download-srt` | Download best SRT (safe if loop detected, raw otherwise) |
 | `GET` | `/api/jobs/{job_id}/download-raw-srt` | Download raw SRT (always, includes any loop) |
-| `POST` | `/api/jobs/{job_id}/transcript` | Start transcript generation (async) |
+| `POST` | `/api/jobs/{job_id}/transcript` | Start transcript generation (async); body: `{ "provider": "claude"\|"ollama", "ollama_model": "..." }` |
 | `GET` | `/api/jobs/{job_id}/download-transcript` | Download reconstructed transcript `.md` |
 | `GET` | `/api/config` | Models, languages, engines, defaults |
 
@@ -304,7 +338,7 @@ subtitler/
 │   ├── config.py                # Pydantic Settings (SUBTITLER_ prefix)
 │   ├── jobs.py                  # Job dataclass + thread-safe JobStore
 │   ├── audio.py                 # FFmpeg pipe → float32 numpy array
-│   ├── transcript.py            # Claude API transcript reconstruction
+│   ├── transcript.py            # Transcript reconstruction — Claude API or Ollama (streaming)
 │   ├── subtitles/
 │   │   └── srt.py               # Timestamp formatting, line wrap, SRT output
 │   ├── transcribe/

@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
     ollama_num_ctx: int = 65536   # context window; llama3.1:8b trains to 131072 but 64k fits safely in 32 GB RAM
-    ollama_timeout: int = 600     # seconds; long SRTs need more than the default 5 min
+    ollama_timeout: int = 1800    # seconds; 32b models on long SRTs can take 20-30 min
 
     # ── MLX model repos ───────────────────────────────────────────────────
     mlx_model_repos: dict = {

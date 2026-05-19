@@ -8,6 +8,7 @@ import time
 import uuid
 from pathlib import Path
 
+import httpx
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
@@ -381,7 +382,8 @@ async def job_logs(job_id: str):
 
 
 class TranscriptRequest(BaseModel):
-    provider: Optional[str] = None  # "claude" | "ollama" — overrides SUBTITLER_TRANSCRIPT_PROVIDER
+    provider: Optional[str] = None       # "claude" | "ollama"
+    ollama_model: Optional[str] = None   # overrides SUBTITLER_OLLAMA_MODEL when provider=ollama
 
 
 @app.post("/api/jobs/{job_id}/transcript")
@@ -394,22 +396,30 @@ async def start_transcript(job_id: str, background_tasks: BackgroundTasks, body:
     if job.transcript_status == "generating":
         raise HTTPException(409, "Transcript generation already in progress.")
     job_store.update(job_id, transcript_status="generating")
-    background_tasks.add_task(_generate_transcript, job_id, body.provider)
+    background_tasks.add_task(_generate_transcript, job_id, body.provider, body.ollama_model)
     return {"status": "generating"}
 
 
-async def _generate_transcript(job_id: str, provider: str | None) -> None:
+async def _generate_transcript(job_id: str, provider: str | None, ollama_model: str | None) -> None:
     job = job_store.get(job_id)
     if not job or not job.srt_path:
         return
+    effective_provider = provider or settings.transcript_provider
+    if effective_provider == "ollama":
+        model_label = f"Ollama ({ollama_model or settings.ollama_model})"
+    else:
+        model_label = f"Claude ({settings.transcript_model})"
+    job_store.log(job_id, f"Generating transcript with {model_label} …")
     try:
         srt_content = Path(job.srt_path).read_text(encoding="utf-8")
-        transcript = await asyncio.to_thread(reconstruct_transcript, srt_content, provider)
+        transcript = await asyncio.to_thread(reconstruct_transcript, srt_content, provider, ollama_model)
         transcript_path = Path(job.srt_path).parent / "transcript.md"
         transcript_path.write_text(transcript, encoding="utf-8")
         job_store.update(job_id, transcript_status="ready", transcript_path=str(transcript_path))
+        job_store.log(job_id, "Transcript ready.")
     except Exception as exc:  # noqa: BLE001
         job_store.update(job_id, transcript_status="failed", error=str(exc))
+        job_store.log(job_id, f"Transcript failed: {exc}")
 
 
 @app.get("/api/jobs/{job_id}/download-transcript")
@@ -468,6 +478,16 @@ async def download_raw_srt(job_id: str):
     )
 
 
+async def _fetch_ollama_models() -> list[str]:
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            res = await client.get(f"{settings.ollama_base_url}/api/tags")
+            res.raise_for_status()
+            return [m["name"] for m in res.json().get("models", [])]
+    except Exception:  # noqa: BLE001
+        return [settings.ollama_model]
+
+
 @app.get("/api/config")
 async def get_config():
     ffmpeg_ok = bool(shutil.which("ffmpeg"))
@@ -498,6 +518,7 @@ async def get_config():
             "provider": settings.transcript_provider,
             "claude_model": settings.transcript_model,
             "ollama_model": settings.ollama_model,
+            "ollama_models": await _fetch_ollama_models(),
         },
         "system": {
             "ffmpeg_available": ffmpeg_ok,

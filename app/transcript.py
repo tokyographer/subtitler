@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import anthropic
 import httpx
 
@@ -35,10 +37,10 @@ Output format:
 """
 
 
-def reconstruct_transcript(srt_content: str, provider: str | None = None) -> str:
+def reconstruct_transcript(srt_content: str, provider: str | None = None, ollama_model: str | None = None) -> str:
     effective = provider or settings.transcript_provider
     if effective == "ollama":
-        return _reconstruct_with_ollama(srt_content)
+        return _reconstruct_with_ollama(srt_content, ollama_model or settings.ollama_model)
     return _reconstruct_with_claude(srt_content)
 
 
@@ -64,18 +66,28 @@ def _reconstruct_with_claude(srt_content: str) -> str:
     return response.content[0].text
 
 
-def _reconstruct_with_ollama(srt_content: str) -> str:
+def _reconstruct_with_ollama(srt_content: str, model: str) -> str:
     url = f"{settings.ollama_base_url}/api/chat"
     payload = {
-        "model": settings.ollama_model,
+        "model": model,
         "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": srt_content},
         ],
         "options": {"num_ctx": settings.ollama_num_ctx},
-        "stream": False,
+        "stream": True,
     }
-    with httpx.Client(timeout=settings.ollama_timeout) as client:
-        response = client.post(url, json=payload)
-        response.raise_for_status()
-    return response.json()["message"]["content"]
+    # Stream the response so the per-chunk read timeout resets with every token —
+    # the overall generation time is unbounded as long as tokens keep arriving.
+    chunks: list[str] = []
+    timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
+    with httpx.Client(timeout=timeout) as client:
+        with client.stream("POST", url, json=payload) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                data = json.loads(line)
+                if not data.get("done"):
+                    chunks.append(data["message"]["content"])
+    return "".join(chunks)

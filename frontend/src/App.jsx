@@ -70,7 +70,8 @@ export default function App() {
   const [model, setModel] = useState("large-v3-turbo");
   const [engine, setEngine] = useState("mlx");
   const [autoTranscript, setAutoTranscript] = useState(false);
-  const [transcriptProvider, setTranscriptProvider] = useState(null); // null = use server default
+  const [transcriptProvider, setTranscriptProvider] = useState(null);
+  const [ollamaModel, setOllamaModel] = useState(null);
   const [filterTranslation, setFilterTranslation] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -100,6 +101,7 @@ export default function App() {
         setLanguage(cfg.defaults.language);
         setEngine(cfg.defaults.engine);
         if (cfg.transcript?.provider) setTranscriptProvider(cfg.transcript.provider);
+        if (cfg.transcript?.ollama_model) setOllamaModel(cfg.transcript.ollama_model);
         if (cfg.system?.ffmpeg_warning) setFfmpegWarning(cfg.system.ffmpeg_warning);
 
       })
@@ -155,7 +157,7 @@ export default function App() {
     setTranscriptStatus("generating");
     setTranscriptError(null);
     try {
-      await generateTranscript(jobId, transcriptProvider);
+      await generateTranscript(jobId, transcriptProvider, ollamaModel);
     } catch (err) {
       setTranscriptStatus("failed");
       setTranscriptError(err.message);
@@ -204,6 +206,7 @@ export default function App() {
     setHallucinationWarning(null);
     setAutoTranscript(false);
     setTranscriptProvider(config?.transcript?.provider ?? "claude");
+    setOllamaModel(config?.transcript?.ollama_model ?? null);
     setFilterTranslation(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -327,20 +330,36 @@ export default function App() {
                   </span>
                 </label>
                 {autoTranscript && config?.transcript && (
-                  <div style={{ marginLeft: 28, marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
-                    <label style={{ fontSize: "0.85rem", color: "var(--text-muted, #888)" }}>Provider</label>
-                    <select
-                      value={transcriptProvider ?? config.transcript.provider}
-                      onChange={(e) => setTranscriptProvider(e.target.value)}
-                      style={{ fontSize: "0.85rem" }}
-                    >
-                      <option value="claude">Claude ({config.transcript.claude_model})</option>
-                      <option value="ollama">Ollama ({config.transcript.ollama_model}) — local, free</option>
-                    </select>
-                    {transcriptProvider === "claude" && (
-                      <span className="field-hint" style={{ marginTop: 0 }}>
-                        Requires <code>SUBTITLER_ANTHROPIC_API_KEY</code>
-                      </span>
+                  <div style={{ marginLeft: 28, marginTop: 6, display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <label style={{ fontSize: "0.85rem", color: "var(--text-muted, #888)", minWidth: 52 }}>Provider</label>
+                      <select
+                        value={transcriptProvider ?? config.transcript.provider}
+                        onChange={(e) => setTranscriptProvider(e.target.value)}
+                        style={{ fontSize: "0.85rem" }}
+                      >
+                        <option value="claude">Claude ({config.transcript.claude_model})</option>
+                        <option value="ollama">Ollama — local, free</option>
+                      </select>
+                      {transcriptProvider === "claude" && (
+                        <span className="field-hint" style={{ marginTop: 0 }}>
+                          Requires <code>SUBTITLER_ANTHROPIC_API_KEY</code>
+                        </span>
+                      )}
+                    </div>
+                    {transcriptProvider === "ollama" && config.transcript.ollama_models?.length > 0 && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <label style={{ fontSize: "0.85rem", color: "var(--text-muted, #888)", minWidth: 52 }}>Model</label>
+                        <select
+                          value={ollamaModel ?? config.transcript.ollama_model}
+                          onChange={(e) => setOllamaModel(e.target.value)}
+                          style={{ fontSize: "0.85rem" }}
+                        >
+                          {config.transcript.ollama_models.map((m) => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select>
+                      </div>
                     )}
                   </div>
                 )}
